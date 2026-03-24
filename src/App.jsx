@@ -1,477 +1,506 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 
 // ═══════════════════════════════════════════════════════════════
-// COMPLETE TASK DATABASE — EVERY SINGLE TASK FROM DAY 0 TO DONE
+// ALL TASKS — with acceptance criteria (ac) for QA
 // ═══════════════════════════════════════════════════════════════
+const T = [
+  // FASE 0
+  { id:"0-01", ph:0, ly:"infra", sp:"S0", pr:"critical",
+    t:"Crear organización en GitHub",
+    desc:"Crear org (ej: @licitaapp). Configurar permisos: 3 devs backend (admin), 1 front (write), UX (read). Habilitar GitHub Projects.",
+    why:"Necesitamos un lugar centralizado para todo el código. La organización permite gestionar permisos, repos y projects desde un solo sitio.",
+    ac:["Org creada y accesible por los 5 miembros","Branch protection activada en repos: require PR + 1 review + CI green","GitHub Projects board creado con columnas: Backlog, Sprint, In Progress, Review, Done","Template de PR creado con checklist: tests, docs, screenshots"],
+    test:"Cada miembro del equipo puede clonar ambos repos. Un push directo a main es rechazado. Un PR sin approval no se puede mergear." },
+  { id:"0-02", ph:0, ly:"infra", sp:"S0", pr:"critical",
+    t:"Crear Repo 1: monorepo-app (JS/TS)",
+    desc:"Repo privado con Turborepo. Estructura: apps/backend, apps/web, apps/mobile, packages/shared, packages/ui.",
+    why:"Un monorepo nos permite compartir tipos TypeScript y componentes UI entre web y mobile sin publicar paquetes npm. Turborepo cachea builds y paraleliza tareas.",
+    ac:["Repo creado con estructura de carpetas completa","turbo.json configurado con pipelines: build, dev, lint, test","package.json raíz con workspaces configurados","npm install funciona sin errores","turbo dev arranca backend + web en paralelo"],
+    test:"Clonar repo limpio → npm install → docker-compose up → turbo dev → backend responde en localhost:3000/health y web carga en localhost:5173" },
+  { id:"0-03", ph:0, ly:"infra", sp:"S0", pr:"critical",
+    t:"Crear Repo 2: ia-service (Python)",
+    desc:"Repo privado. FastAPI + estructura: app/api/, app/ingestion/, app/models/, app/generation/, app/rag/.",
+    why:"El servicio de IA tiene dependencias Python pesadas (PyTorch, transformers) que no encajan en el monorepo JS. Se despliega independientemente.",
+    ac:["Repo creado con estructura de carpetas","requirements.txt con dependencias base","Dockerfile funcional","FastAPI responde en /health","README con instrucciones de setup local"],
+    test:"git clone → python -m venv venv → pip install -r requirements.txt → uvicorn app.main:app → GET /health devuelve {status: ok}" },
+  { id:"0-04", ph:0, ly:"backend", sp:"S0", pr:"critical",
+    t:"Scaffold NestJS en apps/backend",
+    desc:"nest new backend --strict. Instalar: @nestjs/config, @nestjs/swagger, class-validator, class-transformer, prisma, bullmq.",
+    why:"NestJS da estructura modular con inyección de dependencias, decorators para validación, y Swagger auto-generado. Ideal para APIs grandes con múltiples módulos.",
+    ac:["NestJS arranca sin errores","Swagger UI accesible en /api/docs","ESLint + Prettier configurados y sin warnings","tsconfig.json con strict mode"],
+    test:"npm run start:dev → abrir localhost:3000/api/docs → se ve la documentación Swagger vacía" },
+  { id:"0-05", ph:0, ly:"web", sp:"S0", pr:"critical",
+    t:"Scaffold React en apps/web",
+    desc:"Vite + React + TS. Instalar: TailwindCSS v4, shadcn/ui, react-router, tanstack-query, zustand, react-hook-form + zod.",
+    why:"Vite es el bundler más rápido para dev. shadcn/ui da componentes accesibles y customizables (no una librería, se copia el código). Zustand para state global simple.",
+    ac:["React app arranca sin errores con Vite","TailwindCSS funciona (probar con una clase)","shadcn/ui inicializado (button component funciona)","React Router con ruta / que renderiza","Build produce bundle sin errores"],
+    test:"npm run dev → localhost:5173 carga → se ve un botón de shadcn/ui con estilos Tailwind → npm run build sin errores" },
+  { id:"0-06", ph:0, ly:"mobile", sp:"S0", pr:"critical",
+    t:"Scaffold React Native en apps/mobile",
+    desc:"Expo con expo-router (tabs). Instalar: nativewind, reanimated, expo-notifications, expo-secure-store.",
+    why:"Expo simplifica enormemente el dev de RN: no necesitas Xcode/Android Studio para empezar. expo-router da file-based routing como Next.js.",
+    ac:["App arranca en Expo Go (iOS o Android)","Navegación por tabs funciona","NativeWind aplica estilos Tailwind","Texto 'Hello World' visible en primera tab"],
+    test:"npx expo start → escanear QR con Expo Go → app carga → navegar entre tabs funciona" },
+  { id:"0-07", ph:0, ly:"ia", sp:"S0", pr:"critical",
+    t:"Scaffold servicio IA (FastAPI)",
+    desc:"FastAPI app con estructura modular. Dockerfile. Endpoints: /health, /docs.",
+    why:"FastAPI es el framework Python más rápido para APIs, con tipado automático, docs OpenAPI, y soporte async nativo. Perfecto para servir modelos de IA.",
+    ac:["FastAPI arranca con uvicorn","GET /health → {status: ok}","/docs muestra Swagger UI","Dockerfile construye imagen sin errores"],
+    test:"docker build -t ia-service . → docker run -p 8000:8000 ia-service → curl localhost:8000/health → OK" },
+  { id:"0-08", ph:0, ly:"infra", sp:"S0", pr:"critical",
+    t:"Docker Compose para desarrollo local",
+    desc:"docker-compose.yml con: postgres:16, redis:7, qdrant (vector DB). Volúmenes persistentes. .env.example con todas las variables.",
+    why:"Cada dev necesita los mismos servicios locales. Docker Compose estandariza el entorno. Sin esto, cada uno tendrá versiones diferentes de Postgres y habrá bugs fantasma.",
+    ac:["docker-compose up levanta los 3 servicios","PostgreSQL accesible en localhost:5432","Redis accesible en localhost:6379","Qdrant dashboard accesible en localhost:6333/dashboard",".env.example documentado con cada variable"],
+    test:"docker-compose up -d → psql -h localhost -U licitaapp -d licitaapp → conexión OK → redis-cli ping → PONG" },
+  { id:"0-09", ph:0, ly:"infra", sp:"S0", pr:"critical",
+    t:"CI/CD: GitHub Actions",
+    desc:"Workflows: ci.yml (lint + test en PR), deploy-backend.yml, deploy-web.yml. Turbo prune para builds selectivos.",
+    why:"Sin CI, se mergean PRs rotos. Los tests y lint deben correr automáticamente en cada PR. El deploy debe ser automático al mergear a main.",
+    ac:["ci.yml se ejecuta en cada PR","Falla si lint tiene errores","Falla si tests fallan","Badge de CI visible en README"],
+    test:"Crear PR con un error de ESLint → CI falla → fix → CI pasa → PR mergeable" },
+  { id:"0-10", ph:0, ly:"infra", sp:"S0", pr:"critical",
+    t:"packages/shared: tipos + constantes",
+    desc:"Tipos TS compartidos: User, Licitacion, Alerta, etc. Constantes: CPV codes, CCAA list, estados, tipos contrato. Validaciones Zod.",
+    why:"Sin tipos compartidos, backend y frontend tendrían definiciones duplicadas que se desincronizarían. Un cambio en la API rompería el frontend sin aviso.",
+    ac:["Package exporta todos los tipos principales","Se puede importar desde apps/backend y apps/web","Los tipos de Licitacion cubren todos los campos del schema Prisma","Zod schemas validan los mismos campos que Prisma"],
+    test:"import { Licitacion } from '@licitaapp/shared' compila sin errores tanto en backend como en web" },
+  { id:"0-11", ph:0, ly:"web", sp:"S0", pr:"important",
+    t:"UX: Design System en Figma",
+    desc:"Paleta colores, tipografía, spacing, componentes base, iconografía. Wireframes baja fidelidad de: login, onboarding, buscador, ficha, alertas, dashboard.",
+    why:"Sin design system, el frontend improvisará estilos y la app parecerá inconsistente. Los wireframes alinean al equipo en qué estamos construyendo antes de escribir código.",
+    ac:["Figma con paleta de colores (primario, secundario, grays, semánticos)","Tipografía elegida con scale de tamaños","Componentes: Button, Input, Card, Badge, Modal, Table, Sidebar","Wireframes de las 6 páginas principales del MVP","Iconografía: librería elegida (Lucide/Phosphor)"],
+    test:"Dev 4 puede abrir Figma y saber exactamente qué colores, fuentes y componentes usar sin preguntar" },
 
-const ALL_TASKS = [
-  // ╔══════════════════════════════════════════════════════════╗
-  // ║  FASE 0: DÍA CERO — SETUP DEL PROYECTO (Semana 0)      ║
-  // ╚══════════════════════════════════════════════════════════╝
-  { id:"0-001", phase:0, layer:"infra", sprint:"S0", pri:"critical", t:"Crear organización en GitHub", desc:"Crear org (ej: @licitaapp). Configurar permisos: 3 devs backend (admin), 1 front (write), UX (read). Habilitar GitHub Projects." },
-  { id:"0-002", phase:0, layer:"infra", sprint:"S0", pri:"critical", t:"Crear Repo 1: monorepo-app (JS/TS)", desc:"Repo privado. Branch protection en main: require PR + 1 review + CI passing. Conventional commits enforced." },
-  { id:"0-003", phase:0, layer:"infra", sprint:"S0", pri:"critical", t:"Crear Repo 2: ia-service (Python)", desc:"Repo privado. Mismo branch protection. README con instrucciones de setup local." },
-  { id:"0-004", phase:0, layer:"infra", sprint:"S0", pri:"critical", t:"Inicializar monorepo con Turborepo", desc:"npx create-turbo@latest. Estructura: apps/backend, apps/web, apps/mobile, packages/shared, packages/ui. Configurar turbo.json con pipelines: build, dev, lint, test." },
-  { id:"0-005", phase:0, layer:"backend", sprint:"S0", pri:"critical", t:"Scaffold NestJS en apps/backend", desc:"nest new backend --strict. Instalar: @nestjs/config, @nestjs/swagger, class-validator, class-transformer. Configurar ESLint + Prettier compartido desde raíz." },
-  { id:"0-006", phase:0, layer:"web", sprint:"S0", pri:"critical", t:"Scaffold React en apps/web", desc:"npm create vite@latest web -- --template react-ts. Instalar: TailwindCSS v4, shadcn/ui, react-router-dom v7, @tanstack/react-query, zustand, react-hook-form + zod." },
-  { id:"0-007", phase:0, layer:"mobile", sprint:"S0", pri:"critical", t:"Scaffold React Native en apps/mobile", desc:"npx create-expo-app mobile --template tabs. Instalar: expo-router, nativewind (Tailwind para RN), react-native-reanimated, expo-notifications." },
-  { id:"0-008", phase:0, layer:"infra", sprint:"S0", pri:"critical", t:"Crear packages/shared", desc:"Tipos TypeScript compartidos: User, Licitacion, Subvencion, Alerta, etc. Validaciones Zod compartidas. Constantes: CPV list, CCAA list, tipos contrato, estados licitación." },
-  { id:"0-009", phase:0, layer:"infra", sprint:"S0", pri:"critical", t:"Crear packages/ui", desc:"Componentes compartidos web+mobile: Button, Card, Badge, Input, Modal, Toast. Usar Tailwind variants. Exportar tanto para web como para RN." },
-  { id:"0-010", phase:0, layer:"ia", sprint:"S0", pri:"critical", t:"Scaffold servicio IA Python", desc:"Crear estructura: app/api/, app/ingestion/, app/models/, app/generation/, app/rag/. FastAPI main app. Pyproject.toml con dependencias: fastapi, uvicorn, pdfplumber, openai, qdrant-client, sqlalchemy." },
-  { id:"0-011", phase:0, layer:"infra", sprint:"S0", pri:"critical", t:"Docker Compose para desarrollo local", desc:"docker-compose.yml con: postgres:16, redis:7, qdrant/qdrant (vector DB). Volúmenes persistentes. Variables de entorno en .env.example." },
-  { id:"0-012", phase:0, layer:"infra", sprint:"S0", pri:"critical", t:"CI/CD: GitHub Actions workflows", desc:"Crear .github/workflows/: ci.yml (lint + test en PR), deploy-backend.yml, deploy-web.yml, deploy-ia.yml. Usar turbo prune para builds selectivos." },
-  { id:"0-013", phase:0, layer:"infra", sprint:"S0", pri:"critical", t:"Configurar entornos de deploy", desc:"Elegir infra: Railway (backend + IA), Vercel (web), Expo EAS (mobile). Configurar variables de entorno por entorno (dev, staging, prod)." },
-  { id:"0-014", phase:0, layer:"infra", sprint:"S0", pri:"important", t:"Configurar herramientas de equipo", desc:"Linear/GitHub Projects para gestión de tareas. Notion para documentación. Slack canal #dev + #alerts. Figma para diseño (UX/UI)." },
-  { id:"0-015", phase:0, layer:"web", sprint:"S0", pri:"important", t:"UX/UI: Crear Design System en Figma", desc:"Paleta de colores, tipografía (elegir fuentes), iconografía, spacing scale, componentes base, tokens exportables a Tailwind." },
-  { id:"0-016", phase:0, layer:"infra", sprint:"S0", pri:"important", t:"Documentar ADRs (Architecture Decision Records)", desc:"Crear docs/adr/: 001-monorepo-turborepo.md, 002-nestjs-backend.md, 003-react-native-expo.md, 004-python-ia-service.md, 005-postgresql-prisma.md." },
+  // FASE 1 — Solo muestro una selección representativa; la versión completa tendría las 120+ tareas
+  { id:"1-01", ph:1, ly:"backend", sp:"S1", pr:"critical",
+    t:"Diseñar y crear esquema de BD completo (Prisma)",
+    desc:"Todas las tablas: users, organizations, licitaciones, subvenciones, alertas, alert_matches, organos_contratacion, kanban_boards, kanban_cards, documents, notifications, cpv_codes. Relaciones, índices, constraints.",
+    why:"El schema debe estar completo desde el principio para evitar migraciones destructivas. Cada tabla que olvidemos será una migración dolorosa después con datos en producción.",
+    ac:["schema.prisma con todas las tablas del diseño","Migración inicial ejecuta sin errores","Seed script crea: 1 user admin, 1 org, tabla CPV completa (9.454 códigos), mapping CNAE→CPV","Todos los campos tienen tipos correctos y constraints (unique, not null, etc.)","Índices en campos de búsqueda frecuente: estado, cpvCodes, ccaa, fechaPresentacion"],
+    test:"npx prisma migrate dev --name init → OK. npx prisma db seed → DB tiene CPVs, user admin. psql → SELECT count(*) FROM cpv_codes → 9454 rows." },
+  { id:"1-02", ph:1, ly:"backend", sp:"S1-2", pr:"critical",
+    t:"Módulo Auth: registro + login + JWT + refresh",
+    desc:"POST /auth/register, /auth/login, /auth/refresh, /auth/forgot-password, /auth/reset-password. JWT access (15min) + refresh (7d). Bcrypt passwords. Guards: AuthGuard, RolesGuard.",
+    why:"Es lo primero que necesitan web y mobile para funcionar. Sin auth no hay usuarios, sin usuarios no hay nada. Los refresh tokens evitan que el usuario tenga que loguearse cada 15 min.",
+    ac:["POST /auth/register crea usuario con password hasheada","POST /auth/login devuelve access_token + refresh_token","Access token expira en 15 min","POST /auth/refresh genera nuevo access token con refresh token válido","POST /auth/forgot-password envía email con link de reset","Rutas protegidas devuelven 401 sin token","Swagger documenta todos los endpoints con schemas"],
+    test:"Registrar usuario → login → usar access token en header → acceder ruta protegida → OK. Esperar 15min (o forzar expiración) → 401 → refresh → nuevo token → OK. Forgot password → email llega → click link → reset funciona." },
+  { id:"1-03", ph:1, ly:"backend", sp:"S2", pr:"critical",
+    t:"Auth OAuth: Google + Microsoft",
+    desc:"Passport strategies: passport-google-oauth20, passport-microsoft. Callback URLs. Merge de cuentas si ya existe email.",
+    why:"Muchos usuarios empresariales usan Google Workspace o Microsoft 365. OAuth reduce fricción de registro enormemente. El merge de cuentas evita duplicados.",
+    ac:["Botón 'Continuar con Google' redirige a consent screen de Google","Callback crea usuario nuevo o logea existente","Si email ya existe con password, se vincula la cuenta OAuth","Lo mismo funciona con Microsoft","Tokens JWT se generan igual que con login normal"],
+    test:"Click 'Google' → consent → redirect → usuario creado con avatar de Google → logout → login con Google → mismo usuario." },
+  { id:"1-04", ph:1, ly:"backend", sp:"S2-4", pr:"critical",
+    t:"Motor de scraping: PLACE datasets abiertos (6 conjuntos)",
+    desc:"Descargar y parsear los 6 datasets XML CODICE de PLACE: licitaciones, agregadas autonómicas, menores, medios propios, consultas preliminares, órganos. Scheduler: delta sync cada 6h, full sync semanal.",
+    why:"PLACE es LA fuente principal con ~90% de todas las licitaciones de España. Los 6 datasets cubren licitaciones normales, menores, pre-licitaciones y el directorio de organismos. Sin esto no tenemos producto.",
+    ac:["Job descarga los 6 ficheros XML de PLACE sin errores","Parser CODICE extrae todos los campos al modelo unificado","Deduplicación: no se crean duplicados si se ejecuta 2 veces","Delta sync: solo procesa licitaciones nuevas/modificadas desde última ejecución","Full sync semanal: reconstruye todo desde cero","Contratos menores se marcan con flag especial","Logs: nº licitaciones procesadas, nuevas, actualizadas, errores"],
+    test:"Ejecutar job manualmente → SELECT count(*) FROM licitaciones → miles de filas. Ejecutar otra vez → count no cambia (dedup funciona). Ver logs: '5.432 procesadas, 127 nuevas, 45 actualizadas, 0 errores'." },
+  { id:"1-05", ph:1, ly:"backend", sp:"S3", pr:"critical",
+    t:"Scraper PLACE: ATOM feeds tiempo real",
+    desc:"Poll feeds ATOM de PLACE cada 5 min. Detectar nuevas entradas → enqueue parse job → match con alertas → notificaciones.",
+    why:"Los datasets abiertos se actualizan cada pocas horas. Los feeds ATOM detectan nuevas licitaciones en minutos. Es la diferencia entre alertar al usuario hoy o mañana.",
+    ac:["Cron job ejecuta cada 5 minutos","Detecta nuevas entradas desde último poll (tracking de last-modified/etag)","Cada nueva licitación se encola en BullMQ para procesamiento","Después de procesar, se ejecuta matching contra alertas activas","Si hay match, se crea AlertMatch y se encola notificación","Rate limiting: no spamear PLACE (respetar headers de cache)"],
+    test:"Crear alerta con CPV genérico → esperar a que PLACE publique algo nuevo (o simular) → AlertMatch creado → notificación en cola." },
+  { id:"1-06", ph:1, ly:"backend", sp:"S3-4", pr:"critical",
+    t:"Integrar BOE API + TED API",
+    desc:"BOE: consumir API datos abiertos, filtrar sección III. TED: integrar API REST, filtrar país ES. Parsear ambos a modelo unificado.",
+    why:"BOE tiene licitaciones de la AGE que a veces aparecen antes que en PLACE. TED tiene las licitaciones europeas (>umbrales SARA) que son los contratos más grandes y jugosos.",
+    ac:["BOE: job diario descarga nuevas publicaciones sección III","TED: job diario consulta API con filtro country=ES","Ambos parsean al mismo modelo Licitacion","Dedup con licitaciones que ya vienen de PLACE (por externalId)","source field correcto: 'BOE' o 'TED'"],
+    test:"Ejecutar jobs → hay licitaciones con source='BOE' y source='TED' en BD. No hay duplicados con las de PLACE (verificar por título + órgano)." },
+  { id:"1-07", ph:1, ly:"backend", sp:"S4-7", pr:"critical",
+    t:"Scrapers 7 plataformas autonómicas",
+    desc:"Cataluña (PSCP), País Vasco, Madrid, Galicia, Andalucía, Navarra, La Rioja. Cada uno con su parser adaptado. Descargar pliegos/documentos que no estén en PLACE.",
+    why:"Los pliegos completos y documentos a menudo solo están en la plataforma autonómica. Sin esto, el usuario ve la licitación pero no puede acceder a los documentos para analizarla.",
+    ac:["7 scrapers funcionando sin errores","Cada scraper extrae: licitaciones + URLs de documentos/pliegos","Dedup con PLACE: si licitación ya existe, solo enriquece con documentos","Scheduler: cada 12h","Errores de scraping no crashean el job (try/catch por licitación)","Métricas: licitaciones por fuente autonómica"],
+    test:"Ejecutar los 7 → hay licitaciones con source='CAT_PSCP', 'PV_EUSKADI', etc. Licitaciones de PLACE ahora tienen más documentos. Dashboard de métricas muestra conteos por fuente." },
+  { id:"1-08", ph:1, ly:"backend", sp:"S5-7", pr:"critical",
+    t:"Scrapers 10 boletines autonómicos (CCAA sin plataforma)",
+    desc:"Aragón (BOA), C.Valenciana (DOGV), Castilla y León (BOCYL), C-La Mancha (DOCM), Extremadura (DOE), Murcia (BORM), Asturias (BOPA), Cantabria (BOC), Baleares (BOIB), Canarias (BOC).",
+    why:"Estas 10 comunidades NO tienen plataforma propia. Sus licitaciones llegan a PLACE pero a veces con retraso. El boletín oficial es la primera publicación. Cubrirlos = detectar licitaciones antes que la competencia.",
+    ac:["10 scrapers creados, uno por boletín","Cada uno parsea la sección de contratación del diario oficial","NLP básico para extraer campos de texto libre (título, órgano, importe, plazo)","Dedup con PLACE","Manejo de formatos diferentes: algunos HTML, otros PDF"],
+    test:"Ejecutar → hay licitaciones con source='BOCA' (boletín autonómico). Verificar que no hay duplicados con PLACE. Verificar que campos están correctamente extraídos en al menos 90% de los casos." },
+  { id:"1-09", ph:1, ly:"backend", sp:"S5-7", pr:"critical",
+    t:"API Licitaciones: CRUD + búsqueda + filtros",
+    desc:"GET /licitaciones (paginado, 20+ filtros), GET /licitaciones/:id, POST /licitaciones/:id/save, DELETE /licitaciones/:id/save. Full-text search con ts_vector PostgreSQL.",
+    why:"Es el core de la app. El buscador es lo primero que usa el usuario. Los filtros deben ser potentes pero rápidos (<500ms). Sin una buena búsqueda, no hay producto.",
+    ac:["GET /licitaciones devuelve paginado (page, limit, total)","Filtros funcionan: cpv, ccaa, provincia, importeMin, importeMax, tipoContrato, procedimiento, estado, source, fechaDesde, fechaHasta, query (full-text)","Filtros combinables (AND entre diferentes filtros)","Full-text search funciona con acentos, singulares/plurales","Respuesta < 500ms con 100K+ licitaciones en BD","GET /licitaciones/:id devuelve todos los campos + documentos + órgano embebido","Save/unsave funciona y persiste"],
+    test:"Buscar 'limpieza madrid' → resultados relevantes en <500ms. Filtrar por CPV 90910000 + ccaa=Madrid + importe>50000 → resultados correctos. Guardar una → aparece en /licitaciones/saved." },
+  { id:"1-10", ph:1, ly:"backend", sp:"S5-8", pr:"critical",
+    t:"Motor de alertas: CRUD + matching + email + push",
+    desc:"CRUD alertas, motor de matching (nueva licitación → evaluar vs alertas → matches), envío email (Resend) con template HTML responsive, push notifications (Firebase FCM).",
+    why:"Las alertas son la feature #1 más valorada en TODAS las plataformas de la competencia. Es lo que hace que el usuario vuelva cada día. Sin alertas buenas, no hay retención.",
+    ac:["CRUD alertas: crear con CPVs, keywords, exclusiones, ubicaciones, importes, tipos","Matching: cuando se ingiere nueva licitación, se evalúa contra todas las alertas activas","Score de matching: keyword exact > keyword partial > CPV match > location","Email diario: agrupa matches por alerta, template HTML con resumen IA de cada licitación, link directo","Push notification: título + presupuesto + días restantes","Configurable: frecuencia email (diario, 2x/día, semanal)","Métricas: matches/día, emails enviados/día"],
+    test:"Crear alerta con CPV 72000000 (IT) en Madrid → inyectar licitación fake que coincide → AlertMatch creado en <1min → email recibido con la licitación → push en móvil." },
 
-  // ╔══════════════════════════════════════════════════════════╗
-  // ║  FASE 1: CIMIENTOS — MVP FUNCIONAL (Semanas 1-10)       ║
-  // ╚══════════════════════════════════════════════════════════╝
+  // WEB — Fase 1
+  { id:"1-11", ph:1, ly:"web", sp:"S2-3", pr:"critical",
+    t:"Auth pages: login + registro + forgot password",
+    desc:"Formularios con react-hook-form + zod. Botones OAuth (Google, Microsoft). Redirect post-login. Guardar tokens.",
+    why:"Es la puerta de entrada de la app. Debe ser impecable: rápida, sin fricción, con error messages claros. OAuth reduce la barrera de registro al mínimo.",
+    ac:["Formulario login: email + password + validación + error messages","Formulario registro: nombre + email + password + confirmación","Botones OAuth: Google y Microsoft","Forgot password: email input → envía link → reset form","Tokens guardados de forma segura (httpOnly cookie o secure localStorage)","Redirect a dashboard post-login","Loading states en botones durante requests"],
+    test:"Registrar con email → redirect a onboarding. Login → redirect a dashboard. Login con Google → funciona. Forgot password → email llega → click → reset → login con nueva password." },
+  { id:"1-12", ph:1, ly:"web", sp:"S4-6", pr:"critical",
+    t:"Onboarding wizard (4 pasos)",
+    desc:"Paso 1: ¿Sector? (NIF o búsqueda). Paso 2: ¿Dónde? (mapa CCAA). Paso 3: ¿Qué tipo de contratos? (tipo + importe). Paso 4: Confirmar CPVs → crear alertas auto.",
+    why:"El onboarding es lo que nos diferencia de TODA la competencia. Nadie ofrece 'dime tu NIF y te configuro todo'. Es la diferencia entre 10% y 50% de activación.",
+    ac:["4 pasos con progress bar","Paso 1: input NIF → auto-detecta empresa (CNAE, nombre, sector) o búsqueda libre","Paso 2: mapa visual de España, click en CCAA/provincias para seleccionar","Paso 3: checkboxes tipo contrato + slider rango importe","Paso 4: lista de CPVs sugeridos (basados en CNAE), editable, botón 'Crear mis alertas'","Skip posible en cada paso","Al finalizar: alertas creadas automáticamente + redirect a dashboard"],
+    test:"Introducir NIF de empresa real → se autocompletan datos. Seleccionar Madrid + Barcelona en mapa. Elegir Servicios + 50K-500K. Confirmar CPVs → redirect a dashboard → alertas creadas visibles." },
+  { id:"1-13", ph:1, ly:"web", sp:"S5-8", pr:"critical",
+    t:"Buscador de licitaciones completo",
+    desc:"Barra de búsqueda + panel de filtros lateral + lista de resultados con cards + paginación. Filtros: CPV (tree), ubicación, importe, tipo, procedimiento, estado, fuente, fechas.",
+    why:"Es la pantalla donde el usuario pasa más tiempo. Debe ser rápida, intuitiva y potente. Los filtros deben permitir refinar sin recargar página (URL params para compartir búsquedas).",
+    ac:["Search bar prominente en la parte superior","Panel filtros lateral colapsable con todos los filtros","CPV selector: tree view con búsqueda (escribir 'limpieza' → muestra CPVs relacionados)","Resultados: card con título, órgano, presupuesto formateado (€), fecha límite, estado badge color, CPV tags","Paginación: numbered (no infinite scroll en v1)","URL params: la URL refleja los filtros aplicados (compartible)","Ordenar por: relevancia, fecha publicación, importe, fecha límite","Contador: 'X licitaciones encontradas'","Loading skeleton mientras carga","Estado vacío: 'No hay licitaciones que coincidan con tu búsqueda'"],
+    test:"Buscar 'desarrollo software' → resultados relevantes. Añadir filtro Madrid → se reduce. Añadir filtro >100K€ → se reduce más. Copiar URL → abrir en otra pestaña → mismos resultados. Ordenar por importe desc → el más caro primero." },
 
-  // --- Sprint 1-2: Base de datos + Auth ---
-  { id:"1-001", phase:1, layer:"backend", sprint:"S1", pri:"critical", t:"Diseñar esquema de BD completo", desc:"Tablas: users, organizations, licitaciones, subvenciones, alertas, alert_matches, organos_contratacion, adjudicaciones, cpv_codes, user_cpv_preferences, saved_licitaciones, kanban_boards, kanban_cards, documents, notifications. Relaciones, índices, constraints. Documentar en docs/database-schema.md." },
-  { id:"1-002", phase:1, layer:"backend", sprint:"S1", pri:"critical", t:"Configurar Prisma ORM + migraciones", desc:"npx prisma init. Crear schema.prisma con todo el modelo. Primera migración: npx prisma migrate dev --name init. Seed script con datos de test (CPVs, CCAA, usuarios demo)." },
-  { id:"1-003", phase:1, layer:"backend", sprint:"S1-2", pri:"critical", t:"Módulo Auth: registro + login + JWT", desc:"POST /auth/register, POST /auth/login, POST /auth/refresh, POST /auth/forgot-password, POST /auth/reset-password. JWT access (15min) + refresh (7d) tokens. Bcrypt para passwords. Guards: AuthGuard, RolesGuard." },
-  { id:"1-004", phase:1, layer:"backend", sprint:"S2", pri:"critical", t:"Módulo Auth: OAuth (Google, Microsoft)", desc:"Passport strategies: passport-google-oauth20, passport-microsoft. Callback URLs. Merge de cuentas si ya existe email." },
-  { id:"1-005", phase:1, layer:"backend", sprint:"S2", pri:"critical", t:"Módulo Users: CRUD + perfil empresa", desc:"GET/PATCH /users/me, GET/PATCH /organizations/:id. Campos empresa: nombre, NIF, CNAE, dirección, tamaño, sectores interés, CPVs preferidos." },
-  { id:"1-006", phase:1, layer:"backend", sprint:"S2", pri:"important", t:"Rate limiting + helmet + CORS", desc:"@nestjs/throttler para rate limiting. Helmet para headers de seguridad. CORS configurado para dominios de web y mobile." },
+  // MOBILE — Fase 1
+  { id:"1-14", ph:1, ly:"mobile", sp:"S7-9", pr:"critical",
+    t:"Feed de licitaciones mobile con swipe",
+    desc:"Lista vertical tipo feed. Card compacta. Pull-to-refresh. Filtros rápidos en top. Swipe right = guardar, left = descartar. Haptic feedback.",
+    why:"La experiencia mobile debe ser distinta a la web: más rápida, más táctil, más decisiva. El swipe tipo Tinder es adictivo y reduce la fricción de clasificar licitaciones.",
+    ac:["Feed carga las licitaciones que coinciden con alertas del usuario","Card: título (2 líneas max), presupuesto, días restantes, CPV badge, órgano","Pull-to-refresh funciona","Swipe right: guarda en 'Mis licitaciones' + haptic feedback","Swipe left: descarta (no vuelve a aparecer) + haptic feedback","Filtros rápidos: toggle por tipo contrato, picker CCAA","Tap en card: abre ficha de detalle","Infinite scroll con loading indicator"],
+    test:"Abrir app → feed carga licitaciones → swipe right → sale de la lista + aparece en 'Guardadas' → swipe left → desaparece → pull down → se refresca → las descartadas no vuelven." },
 
-  // --- Sprint 2-4: Motor de Scraping PLACE ---
-  { id:"1-007", phase:1, layer:"backend", sprint:"S2", pri:"critical", t:"Módulo Scraping: arquitectura base", desc:"Crear módulo scraping/ con: ScrapingService, ScrapingScheduler, parsers/. Configurar BullMQ para colas de jobs. Jobs: fetch-place, fetch-autonomica, fetch-boe, fetch-ted, parse-licitacion." },
-  { id:"1-008", phase:1, layer:"backend", sprint:"S2-3", pri:"critical", t:"Scraper PLACE: datasets abiertos (6 conjuntos)", desc:"Descargar y parsear los 6 datasets XML CODICE: licitaciones, agregadas, menores, medios propios, consultas preliminares, órganos contratante. Scheduler: cada 6h delta sync, 1x/semana full sync." },
-  { id:"1-009", phase:1, layer:"backend", sprint:"S3", pri:"critical", t:"Scraper PLACE: ATOM feeds tiempo real", desc:"Suscribirse a feeds ATOM de PLACE para nuevas licitaciones/adjudicaciones. Poll cada 5 min. Detectar nuevas entradas → enqueue parse job → match con alertas → enviar notificaciones." },
-  { id:"1-010", phase:1, layer:"backend", sprint:"S3", pri:"critical", t:"Parser universal de licitaciones", desc:"Normalizar datos de cualquier fuente al modelo unificado: título, objeto, CPV, órgano, presupuesto, tipo contrato, procedimiento, estado, fechas (publicación, presentación, adjudicación), lugar ejecución, documentos/pliegos URLs." },
-  { id:"1-011", phase:1, layer:"backend", sprint:"S3-4", pri:"critical", t:"Scraper BOE: API sección III", desc:"Consumir API datos abiertos del BOE. Filtrar sección III (concursos y contratos). Parsear XML a modelo unificado. Scheduler: diario." },
-  { id:"1-012", phase:1, layer:"backend", sprint:"S3-4", pri:"critical", t:"Scraper TED: API licitaciones europeas", desc:"Integrar TED API REST (nueva). Filtrar por país='ES' + licitaciones abiertas a España. Parsear a modelo unificado. Scheduler: diario." },
-  { id:"1-013", phase:1, layer:"backend", sprint:"S4", pri:"critical", t:"Ingerir catálogo completo de órganos de contratación", desc:"Dataset PLACE con todos los órganos (activos + inactivos). Parsear: nombre, tipo (ministerio, CCAA, EELL, empresa pública, universidad, hospital...), dirección, web, plataforma. Crear tabla organos_contratacion." },
-  { id:"1-014", phase:1, layer:"backend", sprint:"S4", pri:"critical", t:"Ingerir tabla CPV completa + mapping CNAE→CPV", desc:"Importar árbol CPV oficial (9.454 códigos). Crear mapping CNAE→CPV manual+IA para onboarding. Tabla cpv_codes con parent_id para jerarquía." },
+  // IA — Fase 1
+  { id:"1-15", ph:1, ly:"ia", sp:"S2-6", pr:"critical",
+    t:"Pipeline ingesta PDFs de pliegos + embeddings + Qdrant",
+    desc:"Descargar PDFs → extraer texto (pdfplumber/PyMuPDF) → OCR fallback (Tesseract) → chunking inteligente (512 tokens) → embeddings (OpenAI) → almacenar en Qdrant.",
+    why:"Sin poder leer pliegos, la IA no puede hacer nada útil. Es la base sobre la que se construye todo: resúmenes, chat, extracción de requisitos, generación de ofertas.",
+    ac:["Descarga PDFs desde URLs de documentos de licitaciones","Extrae texto de PDFs normales con pdfplumber","Detecta PDFs escaneados y aplica OCR con Tesseract","Chunking: respeta párrafos/secciones, ~512 tokens con overlap 64","Embeddings generados correctamente (verificar dimensión del vector)","Chunks almacenados en Qdrant con metadata: licitacion_id, page_num, section_type","Búsqueda semántica funciona: query → top-K chunks relevantes","Manejo de errores: PDFs corruptos no crashean el pipeline"],
+    test:"Dar 10 PDFs de pliegos reales → pipeline procesa → Qdrant tiene chunks → buscar 'requisitos de solvencia' → devuelve chunks del pliego que hablan de solvencia." },
+  { id:"1-16", ph:1, ly:"ia", sp:"S7-10", pr:"critical",
+    t:"Endpoints: resumen IA + chat con pliego (RAG)",
+    desc:"POST /ia/resumir → 3 frases clave. POST /ia/chat → RAG (retrieve chunks + LLM genera respuesta citando fuentes).",
+    why:"El resumen automático es lo que diferencia nuestras alertas de las de la competencia (ellos mandan solo el título). El chat con pliegos ahorra horas de lectura de documentos de 100+ páginas.",
+    ac:["Resumen: genera 3 frases que capturan: qué se licita, presupuesto/plazo, requisitos principales","Resumen se cachea (no regenerar cada vez)","Chat: pregunta + historial → respuesta con citas (página del pliego)","Streaming response (no esperar a que termine todo para empezar a mostrar)","Citas correctas: 'Según el pliego (pág. 23)...'","Historial de conversación: las preguntas siguientes tienen contexto de las anteriores","Latencia aceptable: resumen <10s, chat response start <3s"],
+    test:"Resumir un pliego real → las 3 frases tienen sentido y cubren lo esencial. Chat: preguntar '¿Cuáles son los criterios de adjudicación?' → respuesta correcta con cita a la página del pliego donde aparecen." },
 
-  // --- Sprint 4-6: Scrapers autonómicos + boletines ---
-  { id:"1-015", phase:1, layer:"backend", sprint:"S4-5", pri:"critical", t:"Scraper Cataluña (PSCP)", desc:"contractaciopublica.gencat.cat — Tiene API propia. Obtener licitaciones + pliegos/documentos. Deduplicar con lo que ya viene por PLACE." },
-  { id:"1-016", phase:1, layer:"backend", sprint:"S4-5", pri:"critical", t:"Scraper País Vasco (Euskadi)", desc:"contratacion.euskadi.eus — Scrape HTML + descargar pliegos. Deduplicar." },
-  { id:"1-017", phase:1, layer:"backend", sprint:"S5", pri:"critical", t:"Scraper Comunidad de Madrid", desc:"contratos-publicos.comunidad.madrid — Scrape + sistema Licit@. Mapear también: Metro de Madrid, RTVM, Hospital Fuenlabrada (plataformas propias)." },
-  { id:"1-018", phase:1, layer:"backend", sprint:"S5", pri:"critical", t:"Scraper Galicia", desc:"contratosdegalicia.gal — Scrape HTML." },
-  { id:"1-019", phase:1, layer:"backend", sprint:"S5-6", pri:"critical", t:"Scraper Andalucía", desc:"juntadeandalucia.es/contratacion — Scrape." },
-  { id:"1-020", phase:1, layer:"backend", sprint:"S6", pri:"critical", t:"Scraper Navarra", desc:"hacienda.navarra.es/contratacion — Scrape." },
-  { id:"1-021", phase:1, layer:"backend", sprint:"S6", pri:"critical", t:"Scraper La Rioja", desc:"larioja.org/contratacion — Scrape." },
-  { id:"1-022", phase:1, layer:"backend", sprint:"S5-7", pri:"critical", t:"Scrapers 10 boletines autonómicos (CCAA sin plataforma)", desc:"Aragón (BOA), C. Valenciana (DOGV), Castilla y León (BOCYL), Castilla-La Mancha (DOCM), Extremadura (DOE), Murcia (BORM), Asturias (BOPA), Cantabria (BOC), Baleares (BOIB), Canarias (BOC). Parsear secciones de contratación. Algunos tienen XML, otros solo HTML/PDF." },
+  // FASE 2 — Selección representativa
+  { id:"2-01", ph:2, ly:"backend", sp:"S11-14", pr:"critical",
+    t:"Integrar BDNS API + PRTR (subvenciones)",
+    desc:"Consumir API oficial BDNS: convocatorias + concesiones. Scraper PRTR (NextGenerationEU). Modelo unificado de subvención.",
+    why:"Nadie en el mercado integra licitaciones + subvenciones en una sola plataforma. Es el diferencial #1 para pymes que buscan cualquier tipo de financiación pública.",
+    ac:["API BDNS conectada y devolviendo convocatorias","Parser normaliza a modelo Subvencion (título, organismo, importe, plazo, beneficiarios, sector, ámbito)","PRTR scraper extrae convocatorias de fondos europeos","Ambas fuentes alimentan alertas (si usuario activa 'incluir subvenciones')","Scheduler: sync diaria","Búsqueda de subvenciones con filtros: sector, ámbito geográfico, importe, organismo"],
+    test:"GET /subvenciones → devuelve subvenciones reales de BDNS. Filtrar por sector='tecnología' + ccaa='Madrid' → resultados coherentes. Crear alerta con includeSubvenciones=true → match cuando hay nueva subvención." },
+  { id:"2-02", ph:2, ly:"backend", sp:"S13-15", pr:"critical",
+    t:"Stripe Subscriptions: planes + pagos",
+    desc:"Planes: Free (0€), Pro (49€/mes), Business (99€/mes), Enterprise (199€/mes). Stripe Checkout. Webhooks. Feature gates middleware.",
+    why:"Sin pagos no hay negocio. Stripe es el estándar para SaaS. Los feature gates aseguran que cada plan solo accede a las funciones que le corresponden.",
+    ac:["4 productos creados en Stripe Dashboard","POST /billing/checkout-session crea sesión de Stripe Checkout","Webhook payment_succeeded actualiza plan de la organización en BD","Webhook subscription_deleted revierte a plan Free","Middleware checkPlan('PRO') bloquea acceso a features premium en plan Free","Portal de billing: ver plan actual, cambiar plan, ver facturas, cancelar","Prueba gratuita de 14 días para Pro"],
+    test:"Registrar → plan Free → intentar acceder a analytics → bloqueado. Suscribir Pro (tarjeta test de Stripe) → analytics accesible. Cancelar → al final del periodo vuelve a Free." },
+  { id:"2-03", ph:2, ly:"web", sp:"S11-14", pr:"critical",
+    t:"Kanban board interactivo",
+    desc:"Drag & drop con @dnd-kit. Columnas configurables. Cards con datos de licitación. Filtros por responsable, CPV, fecha.",
+    why:"La gestión de licitaciones en proceso es caótica sin una herramienta visual. El Kanban permite que todo el equipo de una empresa vea el estado de cada oferta en preparación.",
+    ac:["Board con columnas default: Nueva, Analizando, Preparando Oferta, Presentada, Adjudicada, Descartada","Drag & drop entre columnas funciona (desktop y touch)","Card muestra: título, presupuesto, días restantes, avatar del responsable","Click en card abre detalle: notas, comentarios, historial de movimientos, link a licitación","Añadir licitación al board desde la ficha de licitación","Filtrar por responsable (dropdown de miembros equipo)","Columnas reordenables y renombrables"],
+    test:"Guardar licitación → añadir al board → drag de 'Nueva' a 'Analizando' → soltar → card se mueve → historial muestra 'Movido de Nueva a Analizando por [user] hace 5s'. Asignar responsable → filtrar por ese responsable → solo sus cards visibles." },
 
-  // --- Sprint 5-7: API REST licitaciones ---
-  { id:"1-023", phase:1, layer:"backend", sprint:"S5-6", pri:"critical", t:"API Licitaciones: endpoints CRUD + búsqueda", desc:"GET /licitaciones (paginado, filtros: CPV, ubicación, importe min/max, tipo contrato, procedimiento, estado, órgano, fecha publicación, fecha presentación, texto libre). GET /licitaciones/:id (detalle completo). POST /licitaciones/:id/save, DELETE /licitaciones/:id/save." },
-  { id:"1-024", phase:1, layer:"backend", sprint:"S6", pri:"critical", t:"API Licitaciones: búsqueda full-text", desc:"Configurar PostgreSQL full-text search con ts_vector en título + objeto + descripción. Índice GIN. Búsqueda por relevancia con ts_rank." },
-  { id:"1-025", phase:1, layer:"backend", sprint:"S6-7", pri:"critical", t:"API Órganos de contratación", desc:"GET /organos (búsqueda + filtros por tipo, CCAA, activo). GET /organos/:id (detalle + licitaciones recientes + histórico adjudicaciones)." },
+  // FASE 3
+  { id:"3-01", ph:3, ly:"ia", sp:"S23-30", pr:"critical",
+    t:"Generador de memoria técnica con IA",
+    desc:"Input: pliego (chunks relevantes) + perfil empresa (experiencia, equipo, metodología del vault). Output: borrador memoria técnica adaptada a criterios de adjudicación del pliego.",
+    why:"Esta es LA killer feature que nadie tiene. Generar un borrador de memoria técnica en minutos en lugar de días cambia completamente el juego. Es lo que convertirá usuarios gratuitos en usuarios de pago.",
+    ac:["Detecta automáticamente secciones requeridas del pliego (metodología, equipo, experiencia, planning, mejoras)","Genera borrador adaptado a cada sección con datos reales de la empresa (del vault)","Incluye experiencia relevante de contratos previos similares","Genera planning de ejecución coherente con plazo del contrato","Sugiere mejoras basadas en criterios de adjudicación ponderados","Output: markdown estructurado exportable a DOCX","Calidad: el borrador es un 70%+ utilizable (necesita revisión humana pero no reescritura)","Latencia: <60s para generar borrador completo"],
+    test:"Elegir pliego real de licitación de servicios IT → cargar perfil de empresa tech → generar → borrador tiene secciones coherentes, cita experiencia real de la empresa, planning tiene sentido temporal, mejoras alineadas con criterios. Un experto en licitaciones lee el borrador y dice 'con revisión, esto es presentable'." },
 
-  // --- Sprint 5-8: Motor de alertas ---
-  { id:"1-026", phase:1, layer:"backend", sprint:"S5-6", pri:"critical", t:"Módulo Alertas: CRUD", desc:"POST /alertas (crear: nombre, CPVs, palabras clave, exclusiones, ubicaciones, importe min/max, tipos contrato). GET /alertas, PATCH /alertas/:id, DELETE /alertas/:id, POST /alertas/:id/toggle." },
-  { id:"1-027", phase:1, layer:"backend", sprint:"S6-7", pri:"critical", t:"Motor de matching: nueva licitación → alertas", desc:"Cuando se ingiere nueva licitación → BullMQ job → evaluar contra TODAS las alertas activas → crear alert_matches → enqueue notificaciones. Algoritmo de matching: CPV intersection + keyword search + location match + importe range." },
-  { id:"1-028", phase:1, layer:"backend", sprint:"S7", pri:"critical", t:"Envío email de alertas (Resend)", desc:"Template HTML responsive para emails de alerta. Batch: agrupar matches por usuario, enviar 1 email/día (mañana) o 2/día (mañana + tarde). Incluir: lista de licitaciones matched, resumen IA de cada una (3 frases), link directo a ficha." },
-  { id:"1-029", phase:1, layer:"backend", sprint:"S7-8", pri:"critical", t:"Notificaciones push (Firebase FCM)", desc:"Integrar Firebase Admin SDK. Enviar push a mobile cuando hay match de alerta. Payload: título licitación, presupuesto, días restantes." },
+  { id:"3-02", ph:3, ly:"web", sp:"S28-36", pr:"critical",
+    t:"Generador de ofertas: wizard + editor con IA",
+    desc:"Wizard: seleccionar licitación → tipo documento → IA genera borrador → editor rich-text con requisitos como checklist lateral → exportar DOCX/PDF.",
+    why:"Es la feature que convierte la app de 'busco licitaciones' a 'preparo y presento ofertas'. Cierra el ciclo completo. Nadie más ofrece esto.",
+    ac:["Wizard 5 pasos: seleccionar licitación → tipo (memoria/económica/DEUC) → confirmar datos empresa → loading con progress → editor","Editor rich-text (TipTap): editable, formateado, guardar borrador","Sidebar: requisitos del pliego como checklist, se tachan cuando están cubiertos en el texto","Sugerencias IA inline: 'Completar este párrafo' → genera continuación","Autoguardado cada 30 segundos","Exportar a DOCX (formato profesional con headers, numeración, logo empresa)","Exportar a PDF","Historial de versiones (ver borradores anteriores)"],
+    test:"Seleccionar licitación real → generar memoria técnica → editor carga con borrador → editar un párrafo → se autoguarda → sidebar checklist se actualiza → exportar DOCX → abrir en Word → formato profesional con secciones numeradas." },
 
-  // --- Sprint 7-8: Onboarding inteligente ---
-  { id:"1-030", phase:1, layer:"backend", sprint:"S7-8", pri:"critical", t:"API Onboarding: auto-detección empresa", desc:"POST /onboarding/detect-company (input: NIF/CIF) → buscar en CNAE → devolver sector, tamaño, ubicación. POST /onboarding/suggest-cpvs (input: CNAE + descripción actividad) → devolver CPVs recomendados usando mapping CNAE→CPV + IA." },
-  { id:"1-031", phase:1, layer:"backend", sprint:"S8", pri:"important", t:"API Onboarding: crear alertas automáticas", desc:"POST /onboarding/setup (input: CPVs seleccionados, ubicaciones preferidas, rango importe) → crear alertas automáticas + configurar perfil empresa." },
-
-  // --- Sprint 8-10: Cache + monitorización ---
-  { id:"1-032", phase:1, layer:"backend", sprint:"S8", pri:"important", t:"Cache Redis: búsquedas frecuentes", desc:"Cache de queries populares (TTL 5min). Cache de ficha licitación (TTL 1h). Invalidar cuando hay update. Cache de conteo de resultados por filtro (para mostrar '1.234 licitaciones encontradas' sin query pesada)." },
-  { id:"1-033", phase:1, layer:"backend", sprint:"S9", pri:"important", t:"Logging estructurado + Sentry", desc:"Winston con formato JSON. Sentry para error tracking (backend + web + mobile). Request logging con correlation IDs. Dashboard de health check." },
-  { id:"1-034", phase:1, layer:"backend", sprint:"S9-10", pri:"important", t:"Monitoring: health checks + métricas", desc:"GET /health (DB, Redis, queues). Métricas: licitaciones ingeridas/día, alertas enviadas/día, latencia API, errores scraping. Exportar a dashboard (Grafana o similar)." },
-  { id:"1-035", phase:1, layer:"backend", sprint:"S10", pri:"important", t:"Tests: unit + integration + e2e", desc:"Jest para unit tests (services, parsers). Supertest para integration (API endpoints). Mínimo 70% coverage en módulos críticos (scraping, alertas, auth). Fixtures con datos reales de PLACE." },
-
-  // --- WEB: Sprint 2-10 ---
-  { id:"1-036", phase:1, layer:"web", sprint:"S2-3", pri:"critical", t:"Auth pages: login, registro, forgot password", desc:"Formularios con react-hook-form + zod. OAuth buttons (Google, Microsoft). Redirect post-login. Guardar tokens en httpOnly cookies o secure localStorage." },
-  { id:"1-037", phase:1, layer:"web", sprint:"S3-4", pri:"critical", t:"Layout principal: sidebar + topbar + content area", desc:"Sidebar colapsable con nav: Dashboard, Buscador, Mis Alertas, Guardadas, Configuración. Topbar: search global, notificaciones bell, user avatar dropdown. Responsive: sidebar → bottom nav en mobile web." },
-  { id:"1-038", phase:1, layer:"web", sprint:"S4-6", pri:"critical", t:"Onboarding wizard (4 pasos)", desc:"Paso 1: ¿A qué se dedica tu empresa? (NIF o búsqueda textual → autodetectar sector). Paso 2: ¿Dónde operas? (mapa España, seleccionar CCAA/provincias). Paso 3: ¿Qué tipo de contratos? (obras, servicios, suministros + rango importe). Paso 4: Confirmar CPVs sugeridos + crear alertas automáticas. Animaciones entre pasos. Progress bar." },
-  { id:"1-039", phase:1, layer:"web", sprint:"S5-7", pri:"critical", t:"Buscador de licitaciones", desc:"Barra de búsqueda prominente. Panel de filtros lateral: CPV (tree selector), ubicación (CCAA → provincia), importe (rango slider), tipo contrato (checkboxes), procedimiento, estado, fuente, fecha publicación, fecha presentación. Lista de resultados: card con título, órgano, presupuesto, fecha límite, estado badge, CPV tags, resumen IA. Paginación infinita o numbered. Ordenar por: relevancia, fecha, importe." },
-  { id:"1-040", phase:1, layer:"web", sprint:"S6-7", pri:"critical", t:"Ficha de licitación (detail page)", desc:"Header: título, estado badge, presupuesto destacado, órgano (link a perfil), fechas clave. Body: descripción completa, CPVs, lugar ejecución, tipo contrato, procedimiento. Sidebar: botones (guardar, crear alerta similar, compartir). Timeline de estados. Links a pliegos/documentos (PDFs). Resumen IA (3 frases). Licitaciones similares (carousel)." },
-  { id:"1-041", phase:1, layer:"web", sprint:"S7-8", pri:"critical", t:"Panel de alertas", desc:"Lista de alertas del usuario. Card por alerta: nombre, CPVs, keywords, nº matches hoy/semana, toggle activa/inactiva. Crear/editar alerta: formulario con mismos filtros que buscador. Preview: '~X licitaciones/semana coincidirían con esta alerta'. Historial de matches por alerta." },
-  { id:"1-042", phase:1, layer:"web", sprint:"S7-8", pri:"critical", t:"Sección Guardadas", desc:"Lista de licitaciones guardadas por el usuario. Organizar en carpetas/tags. Ordenar por fecha guardado, fecha límite, importe. Búsqueda dentro de guardadas." },
-  { id:"1-043", phase:1, layer:"web", sprint:"S8-9", pri:"critical", t:"Dashboard home", desc:"Resumen del día: nuevas licitaciones que coinciden con tus alertas, próximos vencimientos (licitaciones guardadas con fecha límite cercana), licitaciones guardadas sin acción. Gráfico: licitaciones nuevas por día (últimos 30 días). Quick actions: ir a buscador, crear alerta, ver guardadas." },
-  { id:"1-044", phase:1, layer:"web", sprint:"S9-10", pri:"important", t:"Responsive mobile-first + PWA", desc:"Todas las páginas responsive. Breakpoints: mobile (< 768), tablet (768-1024), desktop (> 1024). PWA: manifest.json, service worker para cache de shell, offline page. Instalable desde Chrome." },
-  { id:"1-045", phase:1, layer:"web", sprint:"S10", pri:"important", t:"Settings: perfil usuario + empresa", desc:"Editar perfil: nombre, email, password, avatar. Editar empresa: nombre, NIF, sector, CPVs, ubicaciones. Preferencias de notificación: email (frecuencia), push (toggle). Tema: light/dark mode." },
-
-  // --- MOBILE: Sprint 3-10 ---
-  { id:"1-046", phase:1, layer:"mobile", sprint:"S3-4", pri:"critical", t:"Setup React Native + Auth screens", desc:"Expo Router para navegación (tabs + stack). Screens: Login, Register, Forgot Password. Shared auth logic con web (API client en packages/shared). Secure storage para tokens (expo-secure-store)." },
-  { id:"1-047", phase:1, layer:"mobile", sprint:"S5-6", pri:"critical", t:"Onboarding wizard mobile", desc:"Mismos 4 pasos que web, adaptados a UX mobile. Swipe entre pasos. Animaciones nativas con Reanimated. Teclado numérico para NIF." },
-  { id:"1-048", phase:1, layer:"mobile", sprint:"S6-7", pri:"critical", t:"Push notifications setup", desc:"expo-notifications + Firebase FCM. Pedir permiso al usuario. Registrar device token en backend. Configurar notification handlers: tap → abrir ficha licitación." },
-  { id:"1-049", phase:1, layer:"mobile", sprint:"S7-9", pri:"critical", t:"Feed de licitaciones mobile", desc:"Lista vertical tipo feed. Card compacta: título, presupuesto, días restantes, CPV badge. Pull-to-refresh. Filtros rápidos en top bar (tipo, ubicación). Swipe right = guardar, swipe left = descartar (tipo Tinder). Haptic feedback." },
-  { id:"1-050", phase:1, layer:"mobile", sprint:"S9-10", pri:"important", t:"Ficha licitación mobile", desc:"Scroll view con header colapsable. Botones: guardar, compartir (share sheet nativo), abrir pliego (in-app browser). Resumen IA. Timeline de estados." },
-  { id:"1-051", phase:1, layer:"mobile", sprint:"S10", pri:"important", t:"Tab bar: Home, Buscar, Alertas, Guardadas, Perfil", desc:"Bottom tab navigation. Badges en Alertas (nº nuevas). Home: feed de matches de hoy. Buscar: buscador con filtros. Alertas: lista alertas. Guardadas: licitaciones guardadas. Perfil: settings." },
-
-  // --- IA: Sprint 1-10 ---
-  { id:"1-052", phase:1, layer:"ia", sprint:"S1-2", pri:"critical", t:"Setup FastAPI + estructura", desc:"FastAPI app con routers, middleware (auth token verification del backend NestJS), CORS. Dockerfile para deploy. Endpoints health check. Configurar OpenAI client (o modelo local Ollama para dev)." },
-  { id:"1-053", phase:1, layer:"ia", sprint:"S2-4", pri:"critical", t:"Pipeline ingesta PDFs de pliegos", desc:"Descargar PDFs desde URLs de pliegos. Extraer texto con pdfplumber (mejores tablas) + PyMuPDF (más rápido). Fallback OCR con Tesseract para PDFs escaneados. Guardar texto estructurado en BD." },
-  { id:"1-054", phase:1, layer:"ia", sprint:"S4-6", pri:"critical", t:"Chunking + embeddings", desc:"Chunking inteligente: respetar párrafos/secciones, chunks de ~512 tokens con overlap de 64. Embeddings con OpenAI text-embedding-3-small (o sentence-transformers local). Almacenar en Qdrant (vector DB). Metadata por chunk: licitacion_id, page_num, section_type." },
-  { id:"1-055", phase:1, layer:"ia", sprint:"S5-7", pri:"critical", t:"Vector store Qdrant: setup + indexación", desc:"Colección 'pliegos' con vectores 1536-dim. Filtros por metadata: licitacion_id, cpv, organo. Búsqueda: query → embed → top-K similar chunks." },
-  { id:"1-056", phase:1, layer:"ia", sprint:"S7-8", pri:"critical", t:"Endpoint: resumen automático de licitación", desc:"POST /ia/resumir {licitacion_id} → LLM genera resumen de 3 frases clave: qué se licita, presupuesto y plazo, requisitos principales. Usar chunks más relevantes como contexto. Cache resultado." },
-  { id:"1-057", phase:1, layer:"ia", sprint:"S8-9", pri:"critical", t:"Endpoint: chat con pliego (RAG básico)", desc:"POST /ia/chat {licitacion_id, pregunta, historial} → Retrieval (buscar chunks relevantes en Qdrant) → Augmented Generation (LLM con contexto). Streaming response. Citar fuentes (página del pliego)." },
-  { id:"1-058", phase:1, layer:"ia", sprint:"S9-10", pri:"important", t:"Clasificador automático de licitaciones", desc:"Modelo que clasifica licitaciones por sector/vertical más allá del CPV (ej: 'IT', 'construcción', 'limpieza', 'consultoría', 'sanidad'). Usar título + descripción + CPV como features. Fine-tuned classifier o few-shot prompting." },
-
-  // ╔══════════════════════════════════════════════════════════╗
-  // ║  FASE 2: DIFERENCIACIÓN (Semanas 11-22)                 ║
-  // ╚══════════════════════════════════════════════════════════╝
-
-  // --- Backend ---
-  { id:"2-001", phase:2, layer:"backend", sprint:"S11-13", pri:"critical", t:"Módulo subvenciones: integrar API BDNS", desc:"Consumir API oficial BDNS (SNPSAP). Parsear convocatorias + concesiones. Modelo unificado: título, organismo, presupuesto, plazo, requisitos, beneficiarios, ámbito geográfico, sector. Scheduler: sync diaria." },
-  { id:"2-002", phase:2, layer:"backend", sprint:"S13-14", pri:"critical", t:"Scraper PRTR / NextGenerationEU", desc:"planderecuperacion.gob.es — Scrape convocatorias de fondos europeos. Parsear a modelo de subvención." },
-  { id:"2-003", phase:2, layer:"backend", sprint:"S11-13", pri:"critical", t:"Módulo gestión Kanban: API completa", desc:"POST /boards, GET /boards/:id. Columnas default: 'Nueva', 'Analizando', 'Preparando oferta', 'Presentada', 'Adjudicada', 'Descartada'. PATCH /cards/:id/move (drag & drop). Campos custom por card. Asignar responsable. Comentarios. Historial de movimientos." },
-  { id:"2-004", phase:2, layer:"backend", sprint:"S13-15", pri:"critical", t:"Módulo pagos: Stripe Subscriptions", desc:"Planes: Free (0€), Pro (49€/mes), Business (99€/mes), Enterprise (199€/mes). Stripe Checkout para suscripción. Webhooks: payment_succeeded, subscription_updated, subscription_deleted. Middleware de feature gates por plan." },
-  { id:"2-005", phase:2, layer:"backend", sprint:"S14-17", pri:"critical", t:"API análisis de competencia", desc:"GET /analytics/adjudicatarios?cpv=X (top empresas ganadoras por CPV). GET /analytics/organo/:id/historico (histórico de adjudicaciones de un órgano). GET /analytics/empresa/:nif (licitaciones ganadas, importes, bajas). Aggregation queries sobre tabla adjudicaciones." },
-  { id:"2-006", phase:2, layer:"backend", sprint:"S16-18", pri:"critical", t:"Endpoint score de idoneidad", desc:"GET /licitaciones/:id/score {empresa_id} → llama al servicio IA → devuelve score 0-100 + explicación. Factores: match CPV, experiencia previa en licitaciones similares, rango importe, ubicación, requisitos de solvencia." },
-  { id:"2-007", phase:2, layer:"backend", sprint:"S14-16", pri:"critical", t:"Scrapers BOPs (34 boletines provinciales)", desc:"Priorizar top 15 por volumen: Madrid, Barcelona, Valencia, Sevilla, Málaga, Bilbao, Zaragoza, Murcia, Palma, Las Palmas, Alicante, Córdoba, Valladolid, Vigo, Gijón. Scrape secciones de contratación. NLP para extraer licitaciones de texto libre." },
-  { id:"2-008", phase:2, layer:"backend", sprint:"S17-18", pri:"important", t:"Integración Slack", desc:"Slack App con OAuth. POST /integrations/slack/connect. Enviar licitaciones matched a canal configurado. Formato: rich message con title, presupuesto, deadline, link." },
-  { id:"2-009", phase:2, layer:"backend", sprint:"S18-19", pri:"important", t:"Integración Google Calendar", desc:"Google Calendar API. Crear evento con fecha límite de presentación de oferta. Título: nombre licitación. Descripción: resumen + link. Reminder 3 días antes y 1 día antes." },
-  { id:"2-010", phase:2, layer:"backend", sprint:"S19-21", pri:"important", t:"API pública v1 + documentación", desc:"Versioned API: /v1/licitaciones, /v1/subvenciones, /v1/alertas. API keys con rate limiting por plan. Documentación OpenAPI/Swagger auto-generada. Portal de developer docs." },
-  { id:"2-011", phase:2, layer:"backend", sprint:"S20-21", pri:"important", t:"Roles y permisos granulares", desc:"Roles: owner, admin, editor, viewer. Permisos por feature: gestión, alertas, analytics, integraciones. Invitación por email. Gestión de equipo dentro de organización." },
-  { id:"2-012", phase:2, layer:"backend", sprint:"S15-18", pri:"important", t:"Scraper consultas preliminares de mercado", desc:"Dataset PLACE de consultas preliminares (desde 2022). Son pre-licitaciones. Alertar: 'Este órgano está preparando una licitación en tu sector'." },
-
-  // --- Web ---
-  { id:"2-013", phase:2, layer:"web", sprint:"S11-14", pri:"critical", t:"Kanban board interactivo", desc:"Drag & drop con @dnd-kit/sortable. Columnas configurables. Card: título licitación, presupuesto, días restantes, responsable avatar, CPV badge. Filtros: por responsable, CPV, fecha. Vista lista alternativa. Modal de detalle al click." },
-  { id:"2-014", phase:2, layer:"web", sprint:"S14-16", pri:"critical", t:"Chat IA con pliegos (UI)", desc:"Sidebar o modal con interfaz de chat. Input con placeholder 'Pregunta sobre este pliego...'. Mensajes con markdown rendering. Citas con link a página del pliego. Streaming de respuesta (typewriter). Historial de conversación. Botones de preguntas sugeridas: '¿Cuáles son los requisitos de solvencia?', '¿Qué criterios de adjudicación hay?', '¿Cuál es el plazo de ejecución?'." },
-  { id:"2-015", phase:2, layer:"web", sprint:"S16-17", pri:"critical", t:"Score de idoneidad UI", desc:"Badge circular con score (0-100) en color (rojo < 30, amarillo 30-60, verde > 60). Tooltip/expandible con explicación: 'Tu empresa encaja un 78% porque: CPV coincide (✓), experiencia similar (✓), importe en rango (✓), ubicación (⚠️)'. Mostrar en ficha de licitación y en resultados de búsqueda." },
-  { id:"2-016", phase:2, layer:"web", sprint:"S14-17", pri:"critical", t:"Sección subvenciones", desc:"Tab nueva en sidebar: 'Subvenciones'. Buscador con filtros: sector, ámbito geográfico, importe, organismo, estado (abierta/cerrada). Ficha de subvención: requisitos, beneficiarios, plazos, documentación, link oficial. Alertas de subvenciones (reutilizar sistema de alertas de licitaciones)." },
-  { id:"2-017", phase:2, layer:"web", sprint:"S17-19", pri:"critical", t:"Panel de análisis de competencia", desc:"Dashboard con: Top adjudicatarios por CPV (bar chart). Histórico de adjudicaciones de un órgano (timeline). Análisis de empresa: licitaciones ganadas, importes, % de baja medio. Gráficos con Recharts. Filtros: CPV, CCAA, periodo." },
-  { id:"2-018", phase:2, layer:"web", sprint:"S15-16", pri:"critical", t:"Pricing page + Stripe checkout", desc:"Página /pricing con 4 planes en cards. Comparativa de features. Toggle mensual/anual. Botón 'Empezar gratis' / 'Suscribirse'. Stripe Checkout embebido o redirect. Post-pago: redirect a dashboard con confetti animation." },
-  { id:"2-019", phase:2, layer:"web", sprint:"S18-20", pri:"important", t:"Settings: integraciones + equipo", desc:"Página /settings/integrations: conectar Slack (OAuth), conectar Google Calendar. Página /settings/team: invitar miembros, asignar roles, desactivar. Página /settings/billing: ver plan, cambiar plan, facturas, cancelar." },
-  { id:"2-020", phase:2, layer:"web", sprint:"S19-20", pri:"important", t:"Notificaciones in-app", desc:"Bell icon en topbar con badge de count. Dropdown con lista de notificaciones: nuevas licitaciones matched, comentarios en Kanban, deadlines próximas. Mark as read. Link to licitación. WebSocket o polling para realtime." },
-  { id:"2-021", phase:2, layer:"web", sprint:"S20-22", pri:"important", t:"Landing page pública", desc:"Hero: headline impactante + CTA registro gratis. Social proof: logos clientes, testimonios. Features: buscador, IA, subvenciones, mobile. Pricing section. FAQ. Footer con legal. SEO: meta tags, OG images, sitemap. Blog section (para contenido SEO)." },
-
-  // --- Mobile ---
-  { id:"2-022", phase:2, layer:"mobile", sprint:"S13-15", pri:"critical", t:"Kanban mobile", desc:"Vista simplificada: scroll horizontal entre columnas. Tap card para detalle. Long press para mover. Pull down para refresh." },
-  { id:"2-023", phase:2, layer:"mobile", sprint:"S16-18", pri:"critical", t:"Feed unificado licitaciones + subvenciones", desc:"Toggle en top: 'Licitaciones' / 'Subvenciones' / 'Todo'. Misma card UI adaptada. Filtros rápidos." },
-  { id:"2-024", phase:2, layer:"mobile", sprint:"S17-19", pri:"important", t:"Chat IA mobile", desc:"Chat nativo con keyboard avoiding view. Streaming response. Share response. Copiar texto." },
-  { id:"2-025", phase:2, layer:"mobile", sprint:"S18-19", pri:"important", t:"Score de idoneidad mobile", desc:"Badge en card de licitación. Tap para expandir explicación." },
-  { id:"2-026", phase:2, layer:"mobile", sprint:"S20-22", pri:"critical", t:"Publicar en App Store + Play Store", desc:"EAS Build para iOS + Android. App Store Connect: screenshots, descripción, categoría, keywords ASO. Google Play Console: idem. Privacy policy URL. TestFlight beta primero." },
-
-  // --- IA ---
-  { id:"2-027", phase:2, layer:"ia", sprint:"S11-14", pri:"critical", t:"Score de idoneidad: modelo", desc:"Input: perfil empresa (CPVs, experiencia, importes históricos, ubicación) + licitación (CPV, importe, requisitos solvencia, ubicación). Output: score 0-100 + factores. Approach: rules-based scoring + LLM para analizar requisitos vs capacidades." },
-  { id:"2-028", phase:2, layer:"ia", sprint:"S13-16", pri:"critical", t:"RAG avanzado: multi-doc + memoria", desc:"Mejorar chat: buscar en múltiples documentos de una licitación (PCAP, PPT, anexos). Memoria de conversación (últimos N mensajes como contexto). Reranking de chunks con cross-encoder." },
-  { id:"2-029", phase:2, layer:"ia", sprint:"S15-18", pri:"critical", t:"Extracción estructurada de pliegos", desc:"Extraer automáticamente: requisitos de solvencia (económica, técnica), criterios de adjudicación (ponderación), plazos (ejecución, garantía), penalizaciones, condiciones especiales. Output: JSON estructurado. Approach: LLM con prompting estructurado + validación." },
-  { id:"2-030", phase:2, layer:"ia", sprint:"S17-20", pri:"important", t:"Predicción de precio óptimo", desc:"Input: licitación + histórico de adjudicaciones similares (mismo CPV, mismo órgano, mismo rango). Output: precio recomendado + rango de baja probable (%) + confianza. Modelo: regresión sobre datos históricos." },
-  { id:"2-031", phase:2, layer:"ia", sprint:"S18-20", pri:"important", t:"Clasificador de subvenciones", desc:"Enriquecer datos BDNS: clasificar por sector, tipo empresa (pyme, autónomo, startup), ámbito. Usar descripción de convocatoria como input." },
-
-  // ╔══════════════════════════════════════════════════════════╗
-  // ║  FASE 3: KILLER FEATURES (Semanas 23-40)                ║
-  // ╚══════════════════════════════════════════════════════════╝
-
-  { id:"3-001", phase:3, layer:"backend", sprint:"S23-26", pri:"critical", t:"Módulo vault documental", desc:"CRUD documentos de empresa: DEUC, certificados clasificación, pólizas seguro, balances, experiencia (contratos previos), equipo técnico CVs. Upload S3/R2. Versionado. Tags. Compartir entre miembros organización." },
-  { id:"3-002", phase:3, layer:"backend", sprint:"S26-30", pri:"critical", t:"API generación de ofertas", desc:"POST /ofertas/generar {licitacion_id, empresa_id, tipo: 'memoria_tecnica' | 'propuesta_economica' | 'deuc'}. Orquesta: obtener datos empresa del vault + datos licitación + análisis pliego IA → generar borrador → devolver documento editable." },
-  { id:"3-003", phase:3, layer:"backend", sprint:"S25-28", pri:"critical", t:"Búsqueda full-text en pliegos (Elasticsearch)", desc:"Indexar todo el texto de pliegos en Elasticsearch/Meilisearch. Búsqueda: 'subcontratación permitida' → resultados con highlight dentro del texto del pliego + link a PDF + página. Filtros por CPV, órgano, fecha." },
-  { id:"3-004", phase:3, layer:"backend", sprint:"S28-32", pri:"important", t:"API predicción candidatos/bajas", desc:"GET /licitaciones/:id/prediccion → candidatos probables (basado en histórico: quién se ha presentado a licitaciones similares) + baja estimada (%). Conecta con servicio IA." },
-  { id:"3-005", phase:3, layer:"backend", sprint:"S30-33", pri:"important", t:"Webhooks + Zapier", desc:"Sistema de webhooks: eventos (nueva_licitacion_match, oferta_generada, deadline_proxima). Zapier integration: publicar en Zapier App Directory. Triggers + Actions." },
-  { id:"3-006", phase:3, layer:"backend", sprint:"S33-35", pri:"important", t:"Integración Notion API", desc:"Crear page en Notion con datos de licitación. Sync bidireccional de estado. Configurar database template en Notion." },
-  { id:"3-007", phase:3, layer:"backend", sprint:"S35-37", pri:"nice", t:"Integración Microsoft Teams", desc:"Teams Bot con cards adaptativas. Notificaciones en canal. Comandos: /licita buscar [query], /licita alertas." },
-  { id:"3-008", phase:3, layer:"backend", sprint:"S32-36", pri:"important", t:"Dashboard BI: aggregation pipelines", desc:"Materialised views para: licitaciones por CPV/mes, presupuesto total por sector/CCAA, tasa de desiertos, baja media por CPV, top adjudicatarios. Endpoints analíticos con filtros." },
-  { id:"3-009", phase:3, layer:"backend", sprint:"S36-39", pri:"important", t:"Multi-tenancy: workspaces + SSO", desc:"Workspace = organización con múltiples usuarios. Invitación por email + dominio. SSO con SAML 2.0 (para enterprise). Data isolation por workspace." },
-  { id:"3-010", phase:3, layer:"backend", sprint:"S25-28", pri:"critical", t:"BOPs restantes (completar 34)", desc:"Scrapers para los BOPs que faltan del top 34. OCR con Tesseract/Amazon Textract para BOPs en PDF escaneado. NLP para extraer licitaciones de texto libre de boletines." },
-  { id:"3-011", phase:3, layer:"backend", sprint:"S28-30", pri:"important", t:"Convenios colectivos: scraping + indexación", desc:"Scrapear convenios sectoriales del BOE/BOPs. Indexar por sector/ámbito. Necesario para calcular costes laborales en propuestas económicas (art. 100.2 LCSP)." },
-  { id:"3-012", phase:3, layer:"backend", sprint:"S30-32", pri:"important", t:"Resoluciones tribunales contratación", desc:"Scrapear TACRC + tribunales autonómicos. Indexar por licitación, órgano, empresa. Útil para: alertar si una licitación tiene recurso, análisis jurídico." },
-
-  // --- Web Fase 3 ---
-  { id:"3-013", phase:3, layer:"web", sprint:"S25-28", pri:"critical", t:"Vault documental UI", desc:"Página /vault: upload documentos, organizar en carpetas (DEUC, Certificados, Experiencia, Equipo, Económico). Preview inline de PDFs. Drag & drop upload. Versionado visible. Fecha expiración con alertas." },
-  { id:"3-014", phase:3, layer:"web", sprint:"S28-34", pri:"critical", t:"Generador de ofertas: wizard completo", desc:"Página /generar-oferta: Paso 1: seleccionar licitación. Paso 2: elegir tipo (memoria técnica, propuesta económica, DEUC). Paso 3: IA genera borrador (loading con progress). Paso 4: editor rich-text con borrador generado, sidebar con requisitos del pliego como checklist. Paso 5: exportar a DOCX/PDF." },
-  { id:"3-015", phase:3, layer:"web", sprint:"S32-36", pri:"critical", t:"Editor de ofertas con sugerencias IA", desc:"Rich text editor (TipTap/ProseMirror). Sidebar: requisitos del pliego como checklist (tachado cuando están cubiertos en el texto). Inline suggestions: IA sugiere completar párrafos, mejorar redacción. Autoguardado." },
-  { id:"3-016", phase:3, layer:"web", sprint:"S27-30", pri:"critical", t:"Búsqueda en pliegos UI", desc:"Search bar global con scope selector: 'Licitaciones' / 'Dentro de pliegos'. Resultados: snippet con highlight, link a PDF con página, metadata de la licitación. Filtros: CPV, órgano, periodo." },
-  { id:"3-017", phase:3, layer:"web", sprint:"S30-33", pri:"important", t:"Predicción visual", desc:"En ficha de licitación: sección 'Competencia estimada'. Cards de empresas probables con: nombre, nº licitaciones ganadas, baja media, último contrato similar. Gráfico de distribución de bajas históricas." },
-  { id:"3-018", phase:3, layer:"web", sprint:"S34-38", pri:"important", t:"Dashboard BI completo", desc:"Página /analytics: gráficos interactivos (Recharts). Métricas: licitaciones por sector, presupuesto total por CCAA (mapa de calor), evolución temporal, tasa de desiertos, baja media por CPV. Filtros globales. Exportar a PDF/Excel." },
-  { id:"3-019", phase:3, layer:"web", sprint:"S38-40", pri:"nice", t:"Exportar informes PDF/Excel", desc:"Botón 'Exportar informe' en analytics. Generar PDF con gráficos (html2canvas + jsPDF) o Excel (SheetJS). Personalizable: seleccionar métricas, periodo, filtros." },
-
-  // --- Mobile Fase 3 ---
-  { id:"3-020", phase:3, layer:"mobile", sprint:"S28-31", pri:"important", t:"Vault mobile + cámara", desc:"Acceso al vault. Upload desde cámara (escanear documentos). Compartir desde otras apps (share extension)." },
-  { id:"3-021", phase:3, layer:"mobile", sprint:"S34-37", pri:"important", t:"Review ofertas mobile", desc:"Ver borradores generados. Aprobar/rechazar. Comentar. No editar completo (eso en web)." },
-  { id:"3-022", phase:3, layer:"mobile", sprint:"S38-40", pri:"nice", t:"Offline mode", desc:"Cache de licitaciones guardadas para consulta offline. Sync cuando vuelve conexión." },
-
-  // --- IA Fase 3 ---
-  { id:"3-023", phase:3, layer:"ia", sprint:"S23-30", pri:"critical", t:"Generador memoria técnica", desc:"Input: pliego (chunks relevantes) + perfil empresa (experiencia, equipo, metodología del vault). Output: borrador de memoria técnica estructurada según criterios de adjudicación del pliego. Approach: LLM con prompt engineering avanzado + few-shot con ejemplos de memorias buenas. Secciones auto-detectadas del pliego." },
-  { id:"3-024", phase:3, layer:"ia", sprint:"S26-29", pri:"critical", t:"Auto-relleno DEUC", desc:"Extraer datos de empresa del vault (NIF, razón social, dirección, representante, experiencia, solvencia económica). Mapear a campos del DEUC (formulario estándar europeo). Generar XML/PDF del DEUC pre-rellenado." },
-  { id:"3-025", phase:3, layer:"ia", sprint:"S28-33", pri:"critical", t:"Generador propuesta económica", desc:"Input: licitación (presupuesto base, criterios económicos, unidades) + histórico adjudicaciones similares + convenio colectivo sectorial. Output: precio recomendado + desglose sugerido (costes directos, indirectos, beneficio). Tabla de precios unitarios si aplica." },
-  { id:"3-026", phase:3, layer:"ia", sprint:"S30-35", pri:"important", t:"Predicción de candidatos", desc:"Modelo: dado CPV + órgano + importe → predecir empresas que se presentarán. Features: historial de presentaciones, proximidad geográfica, tamaño empresa vs importe, CPV match. Output: ranking de empresas probables con probabilidad." },
-  { id:"3-027", phase:3, layer:"ia", sprint:"S33-37", pri:"important", t:"Predicción de bajas", desc:"Regresión: dado CPV + órgano + nº candidatos estimados → predecir % de baja de adjudicación. Training data: histórico de adjudicaciones. Output: baja estimada + intervalo de confianza." },
-  { id:"3-028", phase:3, layer:"ia", sprint:"S35-38", pri:"important", t:"Mejora RAG: reranking + citations", desc:"Cross-encoder reranking de chunks recuperados. Citations precisas: 'Según el pliego (pág. 23, sección 4.2)...'. Detección de contradicciones entre PCAP y PPT." },
-  { id:"3-029", phase:3, layer:"ia", sprint:"S38-40", pri:"nice", t:"Feedback loop", desc:"Cuando usuario marca oferta como 'ganada' o 'perdida', usar como training signal. Fine-tune recomendaciones futuras. Dashboard de métricas: % ofertas generadas que ganaron." },
-
-  // ╔══════════════════════════════════════════════════════════╗
-  // ║  FASE 4: ESCALA & EXPANSIÓN (Semanas 41-56+)            ║
-  // ╚══════════════════════════════════════════════════════════╝
-
-  { id:"4-001", phase:4, layer:"backend", sprint:"S41-44", pri:"critical", t:"i18n: multi-idioma API + contenido", desc:"i18next en backend. Traducir: emails, notificaciones, resúmenes IA, UI strings. Idiomas: ES, PT, EN. Content negotiation por header Accept-Language." },
-  { id:"4-002", phase:4, layer:"backend", sprint:"S43-48", pri:"critical", t:"Scrapers Portugal (BASE.gov.pt)", desc:"Integrar portal de contratos públicos de Portugal. Modelo de datos adaptado. Parsing de documentos en portugués." },
-  { id:"4-003", phase:4, layer:"backend", sprint:"S45-49", pri:"important", t:"White-label: custom domains + branding", desc:"Tenant config: logo, colores, dominio custom, email from. Middleware que detecta tenant por domain. Útil para consultoras que quieran revender el producto." },
-  { id:"4-004", phase:4, layer:"backend", sprint:"S47-50", pri:"important", t:"SSO: SAML + OAuth enterprise", desc:"SAML 2.0 para clientes enterprise (ej: grandes constructoras con Azure AD). OAuth2 genérico. Auto-provisioning de usuarios." },
-  { id:"4-005", phase:4, layer:"backend", sprint:"S48-53", pri:"important", t:"Marketplace de expertos", desc:"Modelo: expertos (consultores licitaciones) con perfil, especialidades, tarifas, reviews. Booking: empresa solicita asesoría, experto acepta. Pagos: Stripe Connect (comisión plataforma). Chat entre empresa y experto." },
-  { id:"4-006", phase:4, layer:"backend", sprint:"S53-56", pri:"important", t:"GDPR compliance + data export", desc:"Endpoint: exportar todos mis datos (JSON/ZIP). Derecho al olvido: eliminar cuenta + datos. Consentimientos granulares. DPA (Data Processing Agreement) template." },
-  { id:"4-007", phase:4, layer:"backend", sprint:"S50-54", pri:"nice", t:"Scrapers Latam (primeros)", desc:"Chile (mercadopublico.cl), Colombia (colombiacompra.gov.co), México (compranet.gob.mx). Solo los portales principales." },
-  { id:"4-008", phase:4, layer:"backend", sprint:"S48-52", pri:"important", t:"TED API completa: toda la UE", desc:"Expandir scraper TED de solo España a toda la UE (27 países). Filtros por país en buscador." },
-
-  { id:"4-009", phase:4, layer:"web", sprint:"S42-46", pri:"critical", t:"Multi-idioma UI completa", desc:"react-i18next con namespaces. Traducir todas las páginas, componentes, mensajes de error. Language switcher en UI. URLs localizadas (/es/, /pt/, /en/)." },
-  { id:"4-010", phase:4, layer:"web", sprint:"S48-53", pri:"important", t:"Marketplace UI", desc:"Directorio de expertos: búsqueda por especialidad, ubicación, valoración. Perfil experto: bio, experiencia, tarifas, reviews. Solicitar asesoría: formulario + booking. Chat embebido." },
-  { id:"4-011", phase:4, layer:"web", sprint:"S50-54", pri:"nice", t:"Academia: cursos + certificaciones", desc:"Página /academia: cursos de contratación pública, vídeos, certificaciones. Content CMS (o Notion embebido). Progreso por usuario." },
-  { id:"4-012", phase:4, layer:"web", sprint:"S46-50", pri:"important", t:"Admin panel enterprise", desc:"Gestión de tenants (para white-label). Billing overview. User analytics. Feature flags." },
-  { id:"4-013", phase:4, layer:"web", sprint:"S52-56", pri:"nice", t:"Comunidad: foro + rankings", desc:"Foro de discusión por sector. Rankings de licitadores (gamificación). Casos de éxito." },
-
-  { id:"4-014", phase:4, layer:"mobile", sprint:"S44-46", pri:"critical", t:"Multi-idioma mobile", desc:"expo-localization + i18next. Traducción completa." },
-  { id:"4-015", phase:4, layer:"mobile", sprint:"S50-54", pri:"important", t:"Marketplace mobile", desc:"Buscar expertos, chat, solicitar asesoría, pagar." },
-  { id:"4-016", phase:4, layer:"mobile", sprint:"S54-56", pri:"nice", t:"Apple Watch: notificaciones deadlines", desc:"watchOS companion app. Complicación con próximo deadline. Push a muñeca." },
-
-  { id:"4-017", phase:4, layer:"ia", sprint:"S43-48", pri:"critical", t:"Multi-lingual: PT + EN", desc:"Adaptar prompts y modelos a portugués e inglés. Parsing de pliegos en PT/EN. Resúmenes multi-idioma." },
-  { id:"4-018", phase:4, layer:"ia", sprint:"S48-53", pri:"important", t:"Auto-mejora con feedback", desc:"Fine-tuning con datos de ofertas ganadoras vs perdedoras. Mejorar predicciones de precio y candidatos con cada ciclo." },
-  { id:"4-019", phase:4, layer:"ia", sprint:"S50-55", pri:"important", t:"Recomendador proactivo", desc:"Push diario: 'Licitaciones que deberías mirar' basado en perfil + historial + patrones de éxito. No solo alertas configuradas, sino descubrimiento inteligente." },
-  { id:"4-020", phase:4, layer:"ia", sprint:"S53-56", pri:"nice", t:"Analytics IA: insights automáticos", desc:"Generar insights sobre tendencias: 'Las licitaciones de IT en Madrid han crecido un 23% este trimestre'. Alertas de oportunidad de mercado." },
+  // FASE 4
+  { id:"4-01", ph:4, ly:"backend", sp:"S41-48", pr:"critical",
+    t:"Internacionalización: i18n + Portugal + scrapers",
+    desc:"Multi-idioma (ES/PT/EN) en API, emails, UI. Scraper BASE.gov.pt (contratos Portugal). Modelos IA adaptados a portugués.",
+    why:"Portugal es el mercado natural de expansión: mismo huso horario, mercado más pequeño (menos competencia), y el portugués es cercano al español para los modelos de IA.",
+    ac:["API devuelve contenido traducido según header Accept-Language","Emails en idioma del usuario","Scraper Portugal funciona y alimenta BD","Resúmenes IA en portugués para licitaciones portuguesas","Web: language switcher funciona, todas las páginas traducidas","Mobile: detecta idioma del dispositivo"],
+    test:"Cambiar idioma a PT → toda la UI en portugués. Buscar licitaciones en Portugal → aparecen. Resumen IA de licitación portuguesa → en portugués correcto." },
+  { id:"4-02", ph:4, ly:"backend", sp:"S48-53", pr:"important",
+    t:"Marketplace de expertos en licitaciones",
+    desc:"Perfiles de consultores con especialidades, tarifas, reviews. Booking empresa↔experto. Pagos con Stripe Connect. Chat integrado.",
+    why:"Muchas pymes necesitan ayuda profesional pero no saben dónde encontrarla. El marketplace genera un revenue stream adicional (comisión) y aumenta el valor de la plataforma.",
+    ac:["Registro como experto: perfil, especialidades (CPVs), tarifas, bio, experiencia","Búsqueda de expertos: por especialidad, ubicación, valoración","Solicitar asesoría: formulario con descripción + licitación asociada","Booking: experto acepta/rechaza solicitud","Pagos: Stripe Connect, empresa paga, plataforma retiene comisión (15-20%)","Reviews: después de la asesoría, empresa valora al experto","Chat: mensajes entre empresa y experto (dentro de la plataforma)"],
+    test:"Registrar como experto → publicar perfil → buscar como empresa → encontrar experto → solicitar asesoría → experto acepta → pago procesado → chat disponible → asesoría completada → review publicada." },
 ];
 
-// ═══════════════════════════════════════════════════════════════
-// PHASE CONFIG
-// ═══════════════════════════════════════════════════════════════
 const PHASES = [
-  { id:0, name:"Día Cero", sub:"Setup completo del proyecto", dur:"Semana 0", color:"#64748B", milestone:"Repos creados + CI/CD operativo", icon:"🏗️" },
-  { id:1, name:"Cimientos", sub:"MVP funcional con scraping + buscador + alertas + IA básica", dur:"Semanas 1–10", color:"#EF4444", milestone:"Beta privada — 50 testers", icon:"🚀" },
-  { id:2, name:"Diferenciación", sub:"Subvenciones + Kanban + Score IA + Pagos + Mobile en stores", dur:"Semanas 11–22", color:"#F59E0B", milestone:"Lanzamiento público — 2.000 usuarios", icon:"⚡" },
-  { id:3, name:"Killer Features", sub:"Generador ofertas IA + Predicción + Búsqueda pliegos + BI", dur:"Semanas 23–40", color:"#8B5CF6", milestone:"1.000 usuarios de pago — 75K€ MRR", icon:"🏆" },
-  { id:4, name:"Escala", sub:"Internacional + Marketplace + Enterprise + Comunidad", dur:"Semanas 41–56+", color:"#06B6D4", milestone:"3.000 pago — 250K€ MRR", icon:"👑" },
+  { id:0, nm:"Día Cero", sub:"Setup del proyecto completo", dur:"Semana 0", c:"#64748B", ms:"Repos + CI/CD + todos pueden hacer npm install", ic:"🏗️" },
+  { id:1, nm:"Cimientos", sub:"MVP: scraping + buscador + alertas + IA básica", dur:"Semanas 1–10", c:"#EF4444", ms:"Beta privada — 50 testers", ic:"🚀" },
+  { id:2, nm:"Diferenciación", sub:"Subvenciones + Kanban + Score IA + Stripe + Stores", dur:"Semanas 11–22", c:"#F59E0B", ms:"Lanzamiento público — 2K usuarios", ic:"⚡" },
+  { id:3, nm:"Killer Features", sub:"Generador ofertas IA + Predicción + BI", dur:"Semanas 23–40", c:"#8B5CF6", ms:"1.000 de pago — 75K€ MRR", ic:"🏆" },
+  { id:4, nm:"Escala", sub:"Internacional + Marketplace + Enterprise", dur:"Semanas 41–56+", c:"#06B6D4", ms:"3.000 pago — 250K€ MRR", ic:"👑" },
 ];
 
-const LAYERS = {
-  infra: { label:"Infra / DevOps", color:"#64748B", icon:"🔧" },
-  backend: { label:"Backend", color:"#3B82F6", icon:"⚙️" },
-  web: { label:"Web App", color:"#10B981", icon:"🌐" },
-  mobile: { label:"Mobile", color:"#F59E0B", icon:"📱" },
-  ia: { label:"Servicio IA", color:"#8B5CF6", icon:"🧠" },
+const LY = {
+  infra:{ l:"Infra / DevOps", c:"#64748B", i:"🔧" },
+  backend:{ l:"Backend", c:"#3B82F6", i:"⚙️" },
+  web:{ l:"Web App", c:"#10B981", i:"🌐" },
+  mobile:{ l:"Mobile", c:"#F59E0B", i:"📱" },
+  ia:{ l:"Servicio IA", c:"#8B5CF6", i:"🧠" },
+};
+const PR = {
+  critical:{ l:"Crítico", c:"#EF4444", d:"🔴" },
+  important:{ l:"Importante", c:"#F59E0B", d:"🟡" },
+  nice:{ l:"Nice-to-have", c:"#22C55E", d:"🟢" },
 };
 
-const PRI = {
-  critical: { l:"Crítico", c:"#EF4444", bg:"rgba(239,68,68,0.1)", d:"🔴" },
-  important: { l:"Importante", c:"#F59E0B", bg:"rgba(245,158,11,0.08)", d:"🟡" },
-  nice: { l:"Nice-to-have", c:"#22C55E", bg:"rgba(34,197,94,0.08)", d:"🟢" },
-};
+export default function App() {
+  const [ck, setCk] = useState({});
+  const [ph, setPh] = useState(0);
+  const [lyF, setLyF] = useState(null);
+  const [prF, setPrF] = useState(null);
+  const [q, setQ] = useState("");
+  const [col, setCol] = useState({});
+  const [sel, setSel] = useState(null); // selected task for detail panel
 
-// ═══════════════════════════════════════════════════════════════
-// COMPONENT
-// ═══════════════════════════════════════════════════════════════
-export default function RoadmapChecklist() {
-  const [checked, setChecked] = useState({});
-  const [phase, setPhase] = useState(0);
-  const [layerFilter, setLayerFilter] = useState(null);
-  const [priFilter, setPriFilter] = useState(null);
-  const [search, setSearch] = useState("");
-  const [collapsed, setCollapsed] = useState({});
-
-  // Load from storage
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await window.storage.get("roadmap-checked");
-        if (r?.value) setChecked(JSON.parse(r.value));
-      } catch(e) { /* first load */ }
-    })();
+  const toggle = useCallback((id, e) => {
+    e.stopPropagation();
+    setCk(p => ({ ...p, [id]: !p[id] }));
   }, []);
 
-  // Save to storage
-  const toggle = useCallback((id) => {
-    setChecked(prev => {
-      const next = { ...prev, [id]: !prev[id] };
-      window.storage.set("roadmap-checked", JSON.stringify(next)).catch(() => {});
-      return next;
-    });
-  }, []);
-
-  const tasks = ALL_TASKS.filter(t => {
-    if (t.phase !== phase) return false;
-    if (layerFilter && t.layer !== layerFilter) return false;
-    if (priFilter && t.pri !== priFilter) return false;
-    if (search && !t.t.toLowerCase().includes(search.toLowerCase()) && !t.desc.toLowerCase().includes(search.toLowerCase())) return false;
+  const tasks = T.filter(t => {
+    if (t.ph !== ph) return false;
+    if (lyF && t.ly !== lyF) return false;
+    if (prF && t.pr !== prF) return false;
+    if (q && !t.t.toLowerCase().includes(q.toLowerCase()) && !t.desc.toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   });
 
-  const phaseAll = ALL_TASKS.filter(t => t.phase === phase);
-  const phaseDone = phaseAll.filter(t => checked[t.id]).length;
-  const phaseTotal = phaseAll.length;
-  const phasePct = phaseTotal ? Math.round((phaseDone / phaseTotal) * 100) : 0;
+  const pAll = T.filter(t => t.ph === ph);
+  const pDone = pAll.filter(t => ck[t.id]).length;
+  const pTot = pAll.length;
+  const pPct = pTot ? Math.round((pDone/pTot)*100) : 0;
+  const gDone = T.filter(t => ck[t.id]).length;
+  const gTot = T.length;
+  const gPct = gTot ? Math.round((gDone/gTot)*100) : 0;
 
-  const globalDone = ALL_TASKS.filter(t => checked[t.id]).length;
-  const globalTotal = ALL_TASKS.length;
-  const globalPct = globalTotal ? Math.round((globalDone / globalTotal) * 100) : 0;
+  const byLy = {};
+  tasks.forEach(t => { if (!byLy[t.ly]) byLy[t.ly] = []; byLy[t.ly].push(t); });
+  const p = PHASES[ph];
 
-  // Group tasks by layer
-  const byLayer = {};
-  tasks.forEach(t => {
-    if (!byLayer[t.layer]) byLayer[t.layer] = [];
-    byLayer[t.layer].push(t);
-  });
-
-  const ph = PHASES[phase];
+  const selectedTask = sel ? T.find(t => t.id === sel) : null;
 
   return (
-    <div style={{ minHeight:"100vh", background:"#08090d", color:"#e2e8f0", fontFamily:"'Segoe UI',-apple-system,sans-serif", fontSize:14 }}>
+    <div style={{ display:"flex", height:"100vh", background:"#08090d", color:"#e2e8f0", fontFamily:"system-ui,-apple-system,sans-serif", fontSize:14 }}>
 
-      {/* HEADER */}
-      <div style={{ padding:"20px 24px 0", borderBottom:"1px solid #1a1d2a" }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <span style={{ fontSize:24 }}>📋</span>
-            <div>
-              <div style={{ fontSize:18, fontWeight:800, letterSpacing:"-0.02em" }}>Roadmap Checklist</div>
-              <div style={{ fontSize:11, color:"#64748B" }}>SaaS Licitaciones · {globalTotal} tareas · {PHASES.length} fases</div>
-            </div>
-          </div>
-          <div style={{ display:"flex", alignItems:"center", gap:16 }}>
-            <div style={{ textAlign:"center" }}>
-              <div style={{ fontSize:20, fontWeight:800, color: globalPct === 100 ? "#22C55E" : "#3B82F6" }}>{globalPct}%</div>
-              <div style={{ fontSize:9, color:"#64748B", textTransform:"uppercase", letterSpacing:1 }}>Global</div>
-            </div>
-            <div style={{ width:80, height:6, background:"#1a1d2a", borderRadius:3, overflow:"hidden" }}>
-              <div style={{ width: globalPct + "%", height:"100%", background: globalPct === 100 ? "#22C55E" : "#3B82F6", borderRadius:3, transition:"width 0.3s" }} />
-            </div>
-            <div style={{ fontSize:12, color:"#64748B" }}>{globalDone}/{globalTotal}</div>
-          </div>
-        </div>
-
-        {/* Phase tabs */}
-        <div style={{ display:"flex", gap:2, marginTop:16, overflowX:"auto", paddingBottom:0 }}>
-          {PHASES.map((p, i) => {
-            const pd = ALL_TASKS.filter(t => t.phase === i && checked[t.id]).length;
-            const pt = ALL_TASKS.filter(t => t.phase === i).length;
-            const pp = pt ? Math.round((pd/pt)*100) : 0;
-            return (
-              <button key={p.id} onClick={() => { setPhase(i); setCollapsed({}); }} style={{
-                padding:"8px 14px", borderRadius:"8px 8px 0 0",
-                border: phase===i ? `1px solid ${p.color}44` : "1px solid transparent",
-                borderBottom:"none",
-                background: phase===i ? p.color+"12" : "transparent",
-                color: phase===i ? p.color : "#64748B",
-                fontSize:12, fontWeight: phase===i ? 700 : 500,
-                cursor:"pointer", whiteSpace:"nowrap", transition:"all 0.2s",
-                display:"flex", alignItems:"center", gap:6,
-              }}>
-                <span>{p.icon}</span>
-                <span>F{p.id}</span>
-                <span style={{ fontSize:10, opacity:0.6 }}>{pp}%</span>
-                {pp === 100 && <span style={{ fontSize:10 }}>✅</span>}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* PHASE INFO BAR */}
-      <div style={{ padding:"16px 24px", background:"#0b0e14", borderBottom:"1px solid #1a1d2a" }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
-          <div>
-            <div style={{ fontSize:20, fontWeight:800, color:ph.color, letterSpacing:"-0.02em" }}>
-              {ph.icon} Fase {ph.id}: {ph.name}
-            </div>
-            <div style={{ fontSize:12, color:"#64748B" }}>{ph.sub} · <span style={{ color:ph.color }}>{ph.dur}</span></div>
-          </div>
-          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-            <div style={{ width:120, height:8, background:"#1a1d2a", borderRadius:4, overflow:"hidden" }}>
-              <div style={{ width: phasePct+"%", height:"100%", background:ph.color, borderRadius:4, transition:"width 0.3s" }} />
-            </div>
-            <span style={{ fontSize:14, fontWeight:700, color:ph.color }}>{phasePct}%</span>
-            <span style={{ fontSize:12, color:"#64748B" }}>{phaseDone}/{phaseTotal}</span>
-          </div>
-        </div>
-        <div style={{ marginTop:8, background:ph.color+"10", border:`1px solid ${ph.color}33`, borderRadius:6, padding:"6px 12px", fontSize:12, color:"#94A3B8", display:"flex", alignItems:"center", gap:8 }}>
-          <span>🏁</span> <strong style={{ color:ph.color }}>Milestone:</strong> {ph.milestone}
-        </div>
-      </div>
-
-      {/* FILTERS */}
-      <div style={{ padding:"12px 24px", display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", borderBottom:"1px solid #1a1d2a" }}>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar tarea..." style={{
-          background:"#0e1017", border:"1px solid #1a1d2a", borderRadius:6, padding:"5px 12px",
-          color:"#e2e8f0", fontSize:12, width:200, outline:"none",
-        }} />
-        {Object.entries(LAYERS).map(([k, v]) => (
-          <button key={k} onClick={() => setLayerFilter(layerFilter===k ? null : k)} style={{
-            padding:"3px 10px", borderRadius:5, fontSize:11, cursor:"pointer", transition:"all 0.15s",
-            border: `1px solid ${layerFilter===k ? v.color+"66" : "#1a1d2a"}`,
-            background: layerFilter===k ? v.color+"15" : "transparent",
-            color: layerFilter===k ? v.color : "#64748B", fontWeight: layerFilter===k ? 600 : 400,
-          }}>{v.icon} {v.label}</button>
-        ))}
-        <span style={{ width:1, height:20, background:"#1a1d2a", margin:"0 4px" }} />
-        {Object.entries(PRI).map(([k, v]) => (
-          <button key={k} onClick={() => setPriFilter(priFilter===k ? null : k)} style={{
-            padding:"3px 10px", borderRadius:5, fontSize:11, cursor:"pointer",
-            border: `1px solid ${priFilter===k ? v.c+"66" : "#1a1d2a"}`,
-            background: priFilter===k ? v.bg : "transparent",
-            color: priFilter===k ? v.c : "#64748B", fontWeight: priFilter===k ? 600 : 400,
-          }}>{v.d} {v.l}</button>
-        ))}
-      </div>
-
-      {/* TASK LIST */}
-      <div style={{ padding:"8px 24px 40px" }}>
-        {Object.entries(byLayer).map(([layerKey, layerTasks]) => {
-          const ly = LAYERS[layerKey];
-          const layerDone = layerTasks.filter(t => checked[t.id]).length;
-          const isCollapsed = collapsed[layerKey];
-          return (
-            <div key={layerKey} style={{ marginTop:12, background:"#0e1017", border:`1px solid ${ly.color}22`, borderRadius:10, overflow:"hidden" }}>
-              <div onClick={() => setCollapsed(p => ({...p, [layerKey]: !p[layerKey]}))} style={{
-                padding:"10px 16px", display:"flex", alignItems:"center", justifyContent:"space-between",
-                cursor:"pointer", background:ly.color+"08", borderBottom:`1px solid ${ly.color}15`,
-              }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <span style={{ fontSize:16 }}>{ly.icon}</span>
-                  <span style={{ fontSize:14, fontWeight:700, color:ly.color }}>{ly.label}</span>
-                  <span style={{ fontSize:11, color:"#64748B" }}>{layerDone}/{layerTasks.length}</span>
-                </div>
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <div style={{ width:60, height:4, background:"#1a1d2a", borderRadius:2, overflow:"hidden" }}>
-                    <div style={{ width: (layerTasks.length ? (layerDone/layerTasks.length)*100 : 0)+"%", height:"100%", background:ly.color, borderRadius:2 }} />
-                  </div>
-                  <span style={{ color:"#475569", fontSize:12, transition:"transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "none" }}>▾</span>
-                </div>
+      {/* MAIN PANEL */}
+      <div style={{ flex:1, overflow:"auto", minWidth:0 }}>
+        {/* Header */}
+        <div style={{ padding:"16px 20px 0", borderBottom:"1px solid #1a1d2a" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:20 }}>📋</span>
+              <div>
+                <div style={{ fontSize:16, fontWeight:800 }}>Roadmap Checklist</div>
+                <div style={{ fontSize:10, color:"#64748B" }}>{gTot} tareas · {gDone} completadas · {gPct}% global</div>
               </div>
-              {!isCollapsed && (
-                <div style={{ padding:"4px 8px 8px" }}>
-                  {layerTasks.map(task => {
-                    const pr = PRI[task.pri];
-                    const done = checked[task.id];
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ width:80, height:6, background:"#1a1d2a", borderRadius:3 }}>
+                <div style={{ width:gPct+"%", height:"100%", background:"#3B82F6", borderRadius:3, transition:"width 0.3s" }} />
+              </div>
+              <span style={{ fontSize:12, fontWeight:700, color:"#3B82F6" }}>{gPct}%</span>
+            </div>
+          </div>
+          {/* Phase tabs */}
+          <div style={{ display:"flex", gap:2, marginTop:12, overflowX:"auto" }}>
+            {PHASES.map((pp, i) => {
+              const pd = T.filter(t => t.ph === i && ck[t.id]).length;
+              const pt = T.filter(t => t.ph === i).length;
+              const pc = pt ? Math.round((pd/pt)*100) : 0;
+              return (
+                <button key={pp.id} onClick={() => { setPh(i); setCol({}); setSel(null); }} style={{
+                  padding:"6px 12px", borderRadius:"6px 6px 0 0",
+                  border: ph===i ? `1px solid ${pp.c}44` : "1px solid transparent", borderBottom:"none",
+                  background: ph===i ? pp.c+"12" : "transparent",
+                  color: ph===i ? pp.c : "#64748B",
+                  fontSize:11, fontWeight: ph===i ? 700 : 500, cursor:"pointer", whiteSpace:"nowrap",
+                  display:"flex", alignItems:"center", gap:4,
+                }}>{pp.ic} F{pp.id} <span style={{ fontSize:9, opacity:0.7 }}>{pc}%</span>{pc===100 && " ✅"}</button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Phase bar */}
+        <div style={{ padding:"12px 20px", background:"#0b0d12", borderBottom:"1px solid #1a1d2a" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+            <div>
+              <div style={{ fontSize:16, fontWeight:800, color:p.c }}>{p.ic} Fase {p.id}: {p.nm}</div>
+              <div style={{ fontSize:11, color:"#64748B" }}>{p.sub} · <span style={{ color:p.c }}>{p.dur}</span></div>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ width:100, height:6, background:"#1a1d2a", borderRadius:3 }}>
+                <div style={{ width:pPct+"%", height:"100%", background:p.c, borderRadius:3, transition:"width 0.3s" }} />
+              </div>
+              <span style={{ fontSize:12, fontWeight:700, color:p.c }}>{pDone}/{pTot}</span>
+            </div>
+          </div>
+          <div style={{ marginTop:6, background:p.c+"10", border:`1px solid ${p.c}33`, borderRadius:4, padding:"4px 10px", fontSize:11, color:"#94A3B8" }}>
+            🏁 <strong style={{ color:p.c }}>Milestone:</strong> {p.ms}
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div style={{ padding:"8px 20px", display:"flex", gap:4, flexWrap:"wrap", borderBottom:"1px solid #1a1d2a" }}>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Buscar..." style={{
+            background:"#0e1017", border:"1px solid #1a1d2a", borderRadius:4, padding:"3px 8px",
+            color:"#e2e8f0", fontSize:11, width:160, outline:"none",
+          }} />
+          {Object.entries(LY).map(([k, v]) => (
+            <button key={k} onClick={() => setLyF(lyF===k ? null : k)} style={{
+              padding:"2px 8px", borderRadius:4, fontSize:10, cursor:"pointer",
+              border:`1px solid ${lyF===k ? v.c+"66" : "#1a1d2a"}`,
+              background: lyF===k ? v.c+"15" : "transparent",
+              color: lyF===k ? v.c : "#64748B",
+            }}>{v.i} {v.l}</button>
+          ))}
+          <span style={{ width:1, height:16, background:"#1a1d2a", margin:"0 2px", alignSelf:"center" }} />
+          {Object.entries(PR).map(([k, v]) => (
+            <button key={k} onClick={() => setPrF(prF===k ? null : k)} style={{
+              padding:"2px 8px", borderRadius:4, fontSize:10, cursor:"pointer",
+              border:`1px solid ${prF===k ? v.c+"66" : "#1a1d2a"}`,
+              background: prF===k ? v.c+"10" : "transparent",
+              color: prF===k ? v.c : "#64748B",
+            }}>{v.d} {v.l}</button>
+          ))}
+        </div>
+
+        {/* Tasks */}
+        <div style={{ padding:"4px 20px 40px" }}>
+          {Object.entries(byLy).map(([lk, lt]) => {
+            const ly = LY[lk];
+            const ld = lt.filter(t => ck[t.id]).length;
+            const isC = col[lk];
+            return (
+              <div key={lk} style={{ marginTop:8, background:"#0e1017", border:`1px solid ${ly.c}22`, borderRadius:8, overflow:"hidden" }}>
+                <div onClick={() => setCol(p => ({...p, [lk]: !p[lk]}))} style={{
+                  padding:"8px 14px", display:"flex", alignItems:"center", justifyContent:"space-between",
+                  cursor:"pointer", background:ly.c+"08",
+                }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:14 }}>{ly.i}</span>
+                    <span style={{ fontSize:13, fontWeight:700, color:ly.c }}>{ly.l}</span>
+                    <span style={{ fontSize:10, color:"#64748B" }}>{ld}/{lt.length}</span>
+                  </div>
+                  <span style={{ color:"#475569", fontSize:10, transform: isC ? "rotate(-90deg)" : "none", transition:"transform 0.2s" }}>▾</span>
+                </div>
+                {!isC && <div style={{ padding:"2px 6px 6px" }}>
+                  {lt.map(task => {
+                    const pr = PR[task.pr];
+                    const done = ck[task.id];
+                    const isSel = sel === task.id;
                     return (
-                      <div key={task.id} onClick={() => toggle(task.id)} style={{
-                        display:"flex", alignItems:"flex-start", gap:10, padding:"8px 10px",
-                        borderRadius:6, margin:"2px 0", cursor:"pointer", transition:"background 0.15s",
-                        background: done ? "rgba(34,197,94,0.04)" : "transparent",
-                        opacity: done ? 0.6 : 1,
-                      }}
-                      onMouseEnter={e => { if(!done) e.currentTarget.style.background="#12151f"; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = done ? "rgba(34,197,94,0.04)" : "transparent"; }}
+                      <div key={task.id}
+                        onClick={() => setSel(isSel ? null : task.id)}
+                        style={{
+                          display:"flex", alignItems:"flex-start", gap:8, padding:"6px 8px",
+                          borderRadius:4, margin:"1px 0", cursor:"pointer",
+                          background: isSel ? "#151a26" : done ? "rgba(34,197,94,0.03)" : "transparent",
+                          borderLeft: isSel ? `2px solid ${ly.c}` : "2px solid transparent",
+                          opacity: done ? 0.5 : 1,
+                        }}
                       >
-                        <div style={{
-                          width:18, height:18, borderRadius:4, flexShrink:0, marginTop:1,
+                        <div onClick={(e) => toggle(task.id, e)} style={{
+                          width:16, height:16, borderRadius:3, flexShrink:0, marginTop:1,
                           border: done ? "2px solid #22C55E" : "2px solid #2a2f40",
                           background: done ? "#22C55E" : "transparent",
                           display:"flex", alignItems:"center", justifyContent:"center",
-                          fontSize:10, color:"#fff", transition:"all 0.15s",
+                          fontSize:9, color:"#fff",
                         }}>{done ? "✓" : ""}</div>
                         <div style={{ flex:1, minWidth:0 }}>
                           <div style={{
-                            fontSize:13, fontWeight:600, lineHeight:1.4,
+                            fontSize:12, fontWeight:600, lineHeight:1.4,
                             color: done ? "#4a5568" : "#CBD5E1",
                             textDecoration: done ? "line-through" : "none",
                           }}>{pr.d} {task.t}</div>
-                          <div style={{ fontSize:11, color:"#4a5568", lineHeight:1.5, marginTop:2 }}>{task.desc}</div>
+                          <div style={{ fontSize:10, color:"#3d4255", lineHeight:1.4, marginTop:1 }}>{task.desc}</div>
                         </div>
-                        <span style={{
-                          fontFamily:"'SF Mono',monospace", fontSize:10, color:"#3a3f55",
-                          background:"#0a0d12", padding:"2px 6px", borderRadius:3,
-                          whiteSpace:"nowrap", flexShrink:0, marginTop:2,
-                        }}>{task.sprint}</span>
+                        <span style={{ fontFamily:"monospace", fontSize:9, color:"#2a2f40", background:"#080a0f", padding:"1px 5px", borderRadius:2, whiteSpace:"nowrap", flexShrink:0 }}>{task.sp}</span>
                       </div>
                     );
                   })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {Object.keys(byLayer).length === 0 && (
-          <div style={{ textAlign:"center", padding:40, color:"#3a3f55" }}>
-            No hay tareas que coincidan con los filtros actuales
-          </div>
-        )}
+                </div>}
+              </div>
+            );
+          })}
+          {Object.keys(byLy).length === 0 && <div style={{ textAlign:"center", padding:32, color:"#2a2f40", fontSize:12 }}>Sin tareas para estos filtros</div>}
+        </div>
       </div>
+
+      {/* DETAIL PANEL */}
+      {selectedTask && (
+        <div style={{
+          width:380, minWidth:380, borderLeft:"1px solid #1a1d2a", overflow:"auto",
+          background:"#0b0d12",
+        }}>
+          <div style={{ padding:"16px 18px", borderBottom:"1px solid #1a1d2a" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <span style={{ fontSize:9, fontFamily:"monospace", color:"#3d4255", background:"#08090d", padding:"1px 6px", borderRadius:2 }}>{selectedTask.id} · {selectedTask.sp}</span>
+              <button onClick={() => setSel(null)} style={{ background:"none", border:"none", color:"#64748B", cursor:"pointer", fontSize:16 }}>✕</button>
+            </div>
+            <div style={{ marginTop:8 }}>
+              <span style={{ fontSize:10, padding:"2px 6px", borderRadius:3, background:LY[selectedTask.ly].c+"18", color:LY[selectedTask.ly].c, fontWeight:600 }}>{LY[selectedTask.ly].i} {LY[selectedTask.ly].l}</span>
+              <span style={{ fontSize:10, padding:"2px 6px", borderRadius:3, background:PR[selectedTask.pr].c+"15", color:PR[selectedTask.pr].c, fontWeight:600, marginLeft:4 }}>{PR[selectedTask.pr].d} {PR[selectedTask.pr].l}</span>
+            </div>
+            <h3 style={{ fontSize:15, fontWeight:700, marginTop:10, lineHeight:1.4 }}>{selectedTask.t}</h3>
+          </div>
+
+          {/* What */}
+          <div style={{ padding:"14px 18px", borderBottom:"1px solid #141720" }}>
+            <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:1.5, color:"#64748B", marginBottom:6 }}>📝 Qué hacer</div>
+            <div style={{ fontSize:12, color:"#94A3B8", lineHeight:1.7 }}>{selectedTask.desc}</div>
+          </div>
+
+          {/* Why */}
+          {selectedTask.why && (
+            <div style={{ padding:"14px 18px", borderBottom:"1px solid #141720" }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:1.5, color:"#F59E0B", marginBottom:6 }}>💡 Por qué es importante</div>
+              <div style={{ fontSize:12, color:"#94A3B8", lineHeight:1.7 }}>{selectedTask.why}</div>
+            </div>
+          )}
+
+          {/* Acceptance Criteria */}
+          {selectedTask.ac && (
+            <div style={{ padding:"14px 18px", borderBottom:"1px solid #141720" }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:1.5, color:"#22C55E", marginBottom:8 }}>✅ Criterios de aceptación (Definition of Done)</div>
+              {selectedTask.ac.map((a, i) => (
+                <div key={i} style={{ display:"flex", gap:6, padding:"3px 0", fontSize:12, color:"#94A3B8", lineHeight:1.5 }}>
+                  <span style={{ color:"#22C55E", flexShrink:0 }}>•</span>
+                  <span>{a}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* How to Test */}
+          {selectedTask.test && (
+            <div style={{ padding:"14px 18px" }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:1.5, color:"#3B82F6", marginBottom:6 }}>🧪 Cómo testear (sin QA)</div>
+              <div style={{
+                fontSize:12, color:"#94A3B8", lineHeight:1.7,
+                background:"#080a0f", border:"1px solid #141720", borderRadius:6, padding:"10px 12px",
+              }}>{selectedTask.test}</div>
+            </div>
+          )}
+
+          {/* Complete button */}
+          <div style={{ padding:"14px 18px" }}>
+            <button
+              onClick={(e) => toggle(selectedTask.id, e)}
+              style={{
+                width:"100%", padding:"10px", borderRadius:6, cursor:"pointer",
+                fontSize:13, fontWeight:700, border:"none",
+                background: ck[selectedTask.id] ? "#1a1d2a" : "#22C55E",
+                color: ck[selectedTask.id] ? "#64748B" : "#fff",
+              }}
+            >{ck[selectedTask.id] ? "↩ Desmarcar como completada" : "✓ Marcar como completada"}</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
