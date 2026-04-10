@@ -1,6 +1,4 @@
 
-Copiar
-
 import { useState, useMemo } from "react";
  
 const FEATURES = [
